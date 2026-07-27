@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+
+.output/
+node_modules/
+data/
+
+*.log
+classifier-run*.jsonl
+
+.DS_Store
+coverage/
+*.tsbuildinfo
+.cache/
