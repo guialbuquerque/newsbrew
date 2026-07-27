@@ -24,7 +24,6 @@ import { relatedImageForTopics } from "~/lib/images";
 import type {
   Article,
   DashboardState,
-  Preferences,
   Reaction,
   TopicRating,
 } from "~/lib/types";
@@ -75,7 +74,6 @@ export default function Home() {
   const [state, setState] = createSignal<DashboardState>();
   const [loading, setLoading] = createSignal(true);
   const [refreshing, setRefreshing] = createSignal(false);
-  const [saving, setSaving] = createSignal(false);
   const [savingRating, setSavingRating] = createSignal(false);
   const [panelOpen, setPanelOpen] = createSignal(false);
   const [notice, setNotice] = createSignal("");
@@ -84,9 +82,6 @@ export default function Home() {
   const [draftRatings, setDraftRatings] = createSignal<
     Record<string, Reaction>
   >({});
-  const [preferences, setPreferences] = createSignal<Preferences>({
-    minimumScore: 65,
-  });
   const [sourceName, setSourceName] = createSignal("");
   const [sourceUrl, setSourceUrl] = createSignal("");
 
@@ -108,7 +103,6 @@ export default function Home() {
       if (!response.ok) throw new Error("Could not load your digest");
       const next = (await response.json()) as DashboardState;
       setState(next);
-      setPreferences(next.preferences);
       if (options.clearNotice) setNotice("");
     } catch (error) {
       setNotice(readError(error));
@@ -197,31 +191,12 @@ export default function Home() {
       setNotice(
         ratings.length === 0
           ? "The story’s topic ratings were cleared."
-          : "Topic preferences saved for future rankings.",
+          : "Topic preferences saved for future filtering.",
       );
     } catch (error) {
       setNotice(readError(error));
     } finally {
       setSavingRating(false);
-    }
-  }
-
-  async function savePreferences() {
-    setSaving(true);
-    try {
-      const response = await fetch("/api/preferences", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(preferences()),
-      });
-      if (!response.ok) throw new Error("Could not save preferences");
-      const current = state();
-      if (current) setState({ ...current, preferences: preferences() });
-      setNotice("Match threshold saved for the next refresh.");
-    } catch (error) {
-      setNotice(readError(error));
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -438,7 +413,6 @@ export default function Home() {
                             <span>{article.sourceName}</span>
                             <span class="meta-separator">•</span>
                             <span>{formatWhen(article.publishedAt ?? article.discoveredAt)}</span>
-                            <span class="score">{article.score}% match</span>
                           </div>
                           <h2 class="article-headline">{article.headline}</h2>
                           <p class="byline">{article.byline}</p>
@@ -481,17 +455,14 @@ export default function Home() {
 
                           <Show when={isExpanded(article.id)}>
                             <div class="article-details">
-                              <ul class="summary-list">
-                                <For each={article.bullets}>
-                                  {(bullet) => <li>{bullet}</li>}
-                                </For>
-                              </ul>
+                              <div class="points-markdown">
+                                {article.pointsMarkdown}
+                              </div>
                               <div class="topic-list">
                                 <For each={article.topics}>
                                   {(topic) => <Badge>{topic}</Badge>}
                                 </For>
                               </div>
-                              <p class="match-reason">{article.reason}</p>
                             </div>
                           </Show>
                           <Show when={ratingArticleId() === article.id}>
@@ -524,36 +495,11 @@ export default function Home() {
             <div class="panel-heading">
               <span class="panel-icon"><SlidersHorizontal size={15} /></span>
               <div>
-                <h2>Judgement</h2>
-                <p>Topic ratings are the only signals used to rank stories.</p>
+                <h2>Topic signals</h2>
+                <p>These are the only signals used to filter stories.</p>
               </div>
             </div>
-            <label class="field">
-              <span>
-                Match threshold
-                <strong>{preferences().minimumScore}%</strong>
-              </span>
-              <input
-                class="range"
-                type="range"
-                min="0"
-                max="100"
-                step="5"
-                value={preferences().minimumScore}
-                style={`--range-value: ${preferences().minimumScore}%`}
-                onInput={(event) =>
-                  setPreferences({
-                    ...preferences(),
-                    minimumScore: Number(event.currentTarget.value),
-                  })
-                }
-              />
-            </label>
-            <Button class="w-full" onClick={savePreferences} disabled={saving()}>
-              {saving() ? "Saving…" : "Save threshold"}
-            </Button>
-
-            <details class="topic-preferences">
+            <details class="topic-preferences" open>
               <summary>
                 Topic signals
                 <span>{likedTopics().length} liked · {dislikedTopics().length} disliked</span>
@@ -578,7 +524,7 @@ export default function Home() {
             <p class="learning-note">
               <Sparkles size={13} />
               Topic ratings update these signals and are included in future
-              ranking prompts.
+              filtering prompts.
             </p>
           </section>
 

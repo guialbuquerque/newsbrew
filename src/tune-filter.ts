@@ -1,4 +1,4 @@
-import { classifyArticle, ModelResponseError } from "./lib/ai.ts";
+import { createArticleFilter, ModelResponseError } from "./lib/ai.ts";
 import { config } from "./lib/config.ts";
 import { fetchFeed } from "./lib/ingest.ts";
 import { readState } from "./lib/store.ts";
@@ -34,6 +34,7 @@ if (sources.length === 0) {
   );
 }
 
+const filter = createArticleFilter(state.topicPreferences);
 const startedAt = new Date().toISOString();
 let sequence = 0;
 let judged = 0;
@@ -43,11 +44,10 @@ log({
   type: "run_started",
   startedAt,
   model: config.lmStudioModel,
-  threshold: state.preferences.minimumScore,
+  session: "stateful-responses",
   limitPerSource: limit,
   sources: sources.map(({ id, name, url }) => ({ id, name, url })),
   topicPreferences: state.topicPreferences,
-  recentStoryRatings: state.feedback.slice(0, 20),
   note: "This command does not modify articles, topic preferences, or seen state.",
 });
 
@@ -80,20 +80,18 @@ for (const source of sources) {
 
     const started = performance.now();
     try {
-      const result = await classifyArticle({
+      const included = await filter.decide({
         headline: item.headline,
         byline: item.byline,
         sourceName: source.name,
-        preferences: state.preferences,
-        feedback: state.feedback,
-        topicPreferences: state.topicPreferences,
       });
       judged += 1;
       log({
         type: "judgement",
         ...candidate,
         durationMs: Math.round(performance.now() - started),
-        result,
+        result: included ? "YES" : "NO",
+        context: filter.lastTurn(),
       });
     } catch (error) {
       failed += 1;
@@ -104,6 +102,7 @@ for (const source of sources) {
         error: error instanceof Error ? error.message : String(error),
         rawOutput:
           error instanceof ModelResponseError ? error.rawOutput : undefined,
+        context: filter.lastTurn(),
       });
     }
   }

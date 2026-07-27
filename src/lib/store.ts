@@ -5,17 +5,11 @@ import { config } from "./config.ts";
 import type {
   AppState,
   Article,
-  Feedback,
-  Preferences,
   Reaction,
   Source,
   TopicPreference,
   TopicRating,
 } from "./types.ts";
-
-const seededPreferences: Preferences = {
-  minimumScore: 65,
-};
 
 const seededTopicPreferences: TopicPreference[] = [
   "AI",
@@ -72,11 +66,6 @@ database.exec(`
   PRAGMA foreign_keys = ON;
   PRAGMA journal_mode = WAL;
 
-  CREATE TABLE IF NOT EXISTS preferences (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    minimum_score INTEGER NOT NULL
-  );
-
   CREATE TABLE IF NOT EXISTS sources (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -95,20 +84,12 @@ database.exec(`
     byline TEXT NOT NULL,
     published_at TEXT,
     discovered_at TEXT NOT NULL,
-    score INTEGER NOT NULL,
-    reason TEXT NOT NULL,
     summary TEXT NOT NULL,
+    points_markdown TEXT NOT NULL,
     image_url TEXT NOT NULL,
     image_alt TEXT NOT NULL,
     image_kind TEXT NOT NULL CHECK (image_kind IN ('article', 'related')),
     hidden INTEGER NOT NULL DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS article_bullets (
-    article_id TEXT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
-    position INTEGER NOT NULL,
-    text TEXT NOT NULL,
-    PRIMARY KEY (article_id, position)
   );
 
   CREATE TABLE IF NOT EXISTS article_topics (
@@ -151,28 +132,6 @@ database.exec(`
   CREATE INDEX IF NOT EXISTS ratings_created_at
     ON article_topic_ratings(created_at DESC);
 `);
-
-const preferenceColumns = database
-  .prepare("PRAGMA table_info(preferences)")
-  .all() as Array<{ name: string }>;
-if (
-  preferenceColumns.some(
-    (column) => column.name === "description" || column.name === "avoid",
-  )
-) {
-  database.exec(`
-    BEGIN IMMEDIATE;
-    ALTER TABLE preferences RENAME TO preferences_with_text;
-    CREATE TABLE preferences (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      minimum_score INTEGER NOT NULL
-    );
-    INSERT INTO preferences (id, minimum_score)
-      SELECT id, minimum_score FROM preferences_with_text;
-    DROP TABLE preferences_with_text;
-    COMMIT;
-  `);
-}
 
 function topicKey(topic: string) {
   return topic.trim().toLocaleLowerCase("en-GB").replace(/\s+/g, " ");
@@ -224,18 +183,17 @@ function insertArticle(article: Article) {
     .prepare(`
       INSERT INTO articles (
         id, source_id, source_name, url, headline, byline, published_at,
-        discovered_at, score, reason, summary, image_url, image_alt,
+        discovered_at, summary, points_markdown, image_url, image_alt,
         image_kind, hidden
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         source_name = excluded.source_name,
         url = excluded.url,
         headline = excluded.headline,
         byline = excluded.byline,
         published_at = excluded.published_at,
-        score = excluded.score,
-        reason = excluded.reason,
         summary = excluded.summary,
+        points_markdown = excluded.points_markdown,
         image_url = excluded.image_url,
         image_alt = excluded.image_alt,
         image_kind = excluded.image_kind
@@ -249,24 +207,13 @@ function insertArticle(article: Article) {
       article.byline,
       article.publishedAt ?? null,
       article.discoveredAt,
-      article.score,
-      article.reason,
       article.summary,
+      article.pointsMarkdown,
       article.imageUrl,
       article.imageAlt,
       article.imageKind,
       article.hidden ? 1 : 0,
     );
-
-  database
-    .prepare("DELETE FROM article_bullets WHERE article_id = ?")
-    .run(article.id);
-  const insertBullet = database.prepare(`
-    INSERT INTO article_bullets (article_id, position, text) VALUES (?, ?, ?)
-  `);
-  article.bullets.forEach((bullet, position) => {
-    insertBullet.run(article.id, position, bullet);
-  });
 
   database
     .prepare("DELETE FROM article_topics WHERE article_id = ?")
@@ -291,14 +238,6 @@ function initializeData() {
 
   database.exec("BEGIN IMMEDIATE");
   try {
-    database
-      .prepare(`
-        INSERT OR IGNORE INTO preferences
-          (id, minimum_score)
-        VALUES (1, ?)
-      `)
-      .run(seededPreferences.minimumScore);
-
     const sources: Source[] = [
       {
         id: "bbc-news",
@@ -347,23 +286,18 @@ export async function readState(): Promise<AppState> {
     .prepare(`
       SELECT id, source_id AS sourceId, source_name AS sourceName, url,
         headline, byline, published_at AS publishedAt,
-        discovered_at AS discoveredAt, score, reason, summary,
+        discovered_at AS discoveredAt, summary,
+        points_markdown AS pointsMarkdown,
         image_url AS imageUrl, image_alt AS imageAlt,
         image_kind AS imageKind, hidden
       FROM articles ORDER BY discovered_at DESC LIMIT 250
     `)
     .all() as Array<
-    Omit<Article, "topics" | "bullets" | "topicRatings" | "hidden"> & {
+    Omit<Article, "topics" | "topicRatings" | "hidden"> & {
       hidden: number;
     }
   >;
 
-  const bullets = database
-    .prepare(`
-      SELECT article_id AS articleId, text
-      FROM article_bullets ORDER BY article_id, position
-    `)
-    .all() as Array<{ articleId: string; text: string }>;
   const topics = database
     .prepare(`
       SELECT article_id AS articleId, topic
@@ -377,13 +311,6 @@ export async function readState(): Promise<AppState> {
     `)
     .all() as Array<{ articleId: string; topic: string; reaction: Reaction }>;
 
-  const bulletsByArticle = new Map<string, string[]>();
-  for (const row of bullets) {
-    bulletsByArticle.set(row.articleId, [
-      ...(bulletsByArticle.get(row.articleId) ?? []),
-      row.text,
-    ]);
-  }
   const topicsByArticle = new Map<string, string[]>();
   for (const row of topics) {
     topicsByArticle.set(row.articleId, [
@@ -403,16 +330,8 @@ export async function readState(): Promise<AppState> {
     ...row,
     hidden: Boolean(row.hidden),
     topics: topicsByArticle.get(row.id) ?? [],
-    bullets: bulletsByArticle.get(row.id) ?? [],
     topicRatings: ratingsByArticle.get(row.id) ?? [],
   }));
-
-  const preference = database
-    .prepare(`
-      SELECT minimum_score AS minimumScore
-      FROM preferences WHERE id = 1
-    `)
-    .get() as Preferences | undefined;
 
   const topicPreferences = database
     .prepare(`
@@ -421,16 +340,6 @@ export async function readState(): Promise<AppState> {
       ORDER BY reaction, updated_at DESC, topic
     `)
     .all() as TopicPreference[];
-
-  const feedback = database
-    .prepare(`
-      SELECT r.article_id AS articleId, a.headline, r.topic, r.reaction,
-        r.created_at AS createdAt
-      FROM article_topic_ratings r
-      JOIN articles a ON a.id = r.article_id
-      ORDER BY r.created_at DESC LIMIT 40
-    `)
-    .all() as Feedback[];
 
   const seen = database
     .prepare(`
@@ -452,24 +361,10 @@ export async function readState(): Promise<AppState> {
     sources,
     articles,
     seen,
-    preferences: preference ?? seededPreferences,
     topicPreferences,
-    feedback,
     lastRunAt: metadata.lastRunAt ?? undefined,
     lastRunError: metadata.lastRunError ?? undefined,
   };
-}
-
-export async function updatePreferences(preferences: Preferences) {
-  database
-    .prepare(`
-      INSERT INTO preferences (id, minimum_score)
-      VALUES (1, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        minimum_score = excluded.minimum_score
-    `)
-    .run(preferences.minimumScore);
-  return readState();
 }
 
 export async function addSource(source: Source) {

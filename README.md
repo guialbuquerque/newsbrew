@@ -7,12 +7,16 @@ local model server such as LM Studio.
 ## What it does
 
 1. Polls your RSS and Atom sources.
-2. Sends each new headline, byline, and source to your local model.
-3. Keeps only stories above your interest threshold.
-4. Extracts the matching article image and asks the model for a short summary
-   plus 3–5 factual bullets.
+2. Sends each new headline, byline, and source through one stateful binary
+   filter session. Newsbrew reads the model's active and maximum context
+   lengths from LM Studio, tracks exact Responses token usage after every turn,
+   and starts a fresh filter chain before the next turn would exceed the active
+   window.
+3. Fetches articles accepted by that filter.
+4. Analyses each accepted article in a two-turn stateful session: first the
+   headline, quick summary, and tags; then detailed Markdown points.
 5. Lets you rate each story topic independently and feeds those signals back
-   into future ranking prompts.
+   into future filtering prompts.
 
 Everything is stored locally in `data/news.sqlite` using Node's built-in
 `node:sqlite` module directly.
@@ -31,7 +35,7 @@ file.
 
 ```dotenv
 LM_STUDIO_BASE_URL=http://127.0.0.1:1234/v1
-LM_STUDIO_MODEL=lfm2.5-8b-a1b-mlx
+LM_STUDIO_MODEL=google/gemma-4-26b-a4b-qat
 LM_STUDIO_API_KEY=lm-studio
 POLL_INTERVAL_MINUTES=30
 MAX_ITEMS_PER_SOURCE=8
@@ -47,7 +51,8 @@ the local `.env` is ignored by git.
 ```bash
 pnpm dev
 pnpm ingest
-pnpm tune:classifier
+pnpm tune:filter
+pnpm tune:analyser
 pnpm worker
 pnpm check
 pnpm test
@@ -56,13 +61,19 @@ pnpm build
 
 - `pnpm dev` runs the SolidStart app.
 - `pnpm ingest` performs one feed scan.
-- `pnpm tune:classifier` fetches and judges every candidate from the enabled
-  feeds, logging each candidate and complete model response as JSONL. It is
+- `pnpm tune:filter` fetches and judges every candidate from the enabled feeds
+  through one stateful filter session, logging every binary result as JSONL. It is
   read-only: it does not add articles, mark stories as seen, or change topic
   preferences. Use `-- --limit=2` to reduce the number per source, or
   `-- --source=ars-technica` to test one source. Redirect stdout if you want to
   keep a clean JSONL log, for example
-  `pnpm --silent tune:classifier > classifier-run.jsonl`.
+  `pnpm --silent tune:filter > filter-run.jsonl`.
+- `pnpm tune:analyser` fetches full articles and runs the two-turn analyser,
+  logging the exact article input, each structured model response, response ID,
+  token count when provided by LM Studio, and timing as JSONL. It is also
+  read-only. The same `-- --limit=2` and `-- --source=ars-technica` options
+  apply. To save a clean log, use
+  `pnpm --silent tune:analyser > analyser-run.jsonl`.
 - `pnpm worker` scans immediately and then every
   `POLL_INTERVAL_MINUTES` minutes.
 

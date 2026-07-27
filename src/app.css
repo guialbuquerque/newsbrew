@@ -218,15 +218,6 @@ a {
   opacity: 0.45;
 }
 
-.score {
-  margin-left: auto;
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  background: transparent;
-  color: var(--muted);
-  padding: 4px 7px;
-}
-
 .article-headline {
   display: -webkit-box;
   overflow: hidden;
@@ -293,33 +284,15 @@ a {
   margin-top: 15px;
 }
 
-.summary-list {
-  display: grid;
+.points-markdown {
   margin: 0;
-  gap: 9px;
-  list-style: none;
   padding: 18px 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-}
-
-.summary-list li {
-  position: relative;
   color: #484a42;
   font-size: 14px;
   line-height: 1.55;
-  padding-left: 18px;
-}
-
-.summary-list li::before {
-  position: absolute;
-  top: 0.62em;
-  left: 1px;
-  width: 5px;
-  height: 5px;
-  border-radius: 0;
-  background: #aacd3f;
-  content: "";
+  white-space: pre-wrap;
 }
 
 .topic-list {
@@ -331,14 +304,6 @@ a {
 
 .article-details .topic-list {
   margin-top: 15px;
-}
-
-.match-reason {
-  margin: 15px 0 0;
-  color: #898a81;
-  font-size: 11px;
-  font-style: italic;
-  line-height: 1.45;
 }
 
 .rating-panel {
@@ -565,23 +530,6 @@ a {
   line-height: 1.45;
 }
 
-.field {
-  display: grid;
-  margin: 0 0 16px;
-  gap: 7px;
-}
-
-.field > span {
-  display: flex;
-  justify-content: space-between;
-  color: #4f5049;
-  font-size: 11px;
-  font-weight: 750;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.field textarea,
 .source-form input {
   width: 100%;
   border: 1px solid var(--border);
@@ -598,35 +546,9 @@ a {
     box-shadow 150ms ease;
 }
 
-.field textarea:focus,
 .source-form input:focus {
   border-color: #96b92d;
   box-shadow: 0 0 0 3px #edf5d6;
-}
-
-.range {
-  width: 100%;
-  height: 4px;
-  margin: 8px 0 4px;
-  appearance: none;
-  border-radius: 999px;
-  background: linear-gradient(
-    to right,
-    #a9ca3e 0%,
-    #a9ca3e var(--range-value, 65%),
-    #d8d7cd var(--range-value, 65%),
-    #d8d7cd 100%
-  );
-}
-
-.range::-webkit-slider-thumb {
-  width: 16px;
-  height: 16px;
-  appearance: none;
-  border: 3px solid white;
-  border-radius: 50%;
-  background: var(--ink);
-  box-shadow: 0 0 0 1px #aaa;
 }
 
 .learning-note {
@@ -853,10 +775,6 @@ a {
 
   .article-meta {
     flex-wrap: wrap;
-  }
-
-  .score {
-    margin-left: 0;
   }
 
   .article-headline {

@@ -28,11 +28,9 @@ export type Article = {
   byline: string;
   publishedAt?: string;
   discoveredAt: string;
-  score: number;
-  reason: string;
   topics: string[];
   summary: string;
-  bullets: string[];
+  pointsMarkdown: string;
   imageUrl: string;
   imageAlt: string;
   imageKind: ImageKind;
@@ -40,25 +38,11 @@ export type Article = {
   hidden: boolean;
 };
 
-export type Preferences = {
-  minimumScore: number;
-};
-
-export type Feedback = {
-  articleId: string;
-  headline: string;
-  topic: string;
-  reaction: Reaction;
-  createdAt: string;
-};
-
 export type AppState = {
   sources: Source[];
   articles: Article[];
   seen: string[];
-  preferences: Preferences;
   topicPreferences: TopicPreference[];
-  feedback: Feedback[];
   lastRunAt?: string;
   lastRunError?: string;
 };

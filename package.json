@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "ingest": "node --experimental-strip-types src/ingest.ts",
-    "tune:classifier": "node --experimental-strip-types src/tune-classifier.ts",
+    "tune:filter": "node --experimental-strip-types src/tune-filter.ts",
+    "tune:analyser": "node --experimental-strip-types src/tune-analyser.ts",
     "worker": "node --experimental-strip-types src/worker.ts",
     "test": "node --experimental-strip-types --test src/lib/*.test.ts"
   },

@@ -1,5 +1,5 @@
 import { fetchArticle } from "./article.ts";
-import { classifyArticle, summarizeArticle } from "./ai.ts";
+import { analyseArticle, createArticleFilter } from "./ai.ts";
 import { config } from "./config.ts";
 import { relatedImageForTopics } from "./images.ts";
 import { parseFeed } from "./rss.ts";
@@ -33,6 +33,7 @@ export async function runIngestion() {
     ...state.articles.map((article) => article.id),
   ]);
   const accepted: Article[] = [];
+  const filter = createArticleFilter(state.topicPreferences);
 
   for (const source of state.sources.filter((item) => item.enabled)) {
     try {
@@ -48,36 +49,28 @@ export async function runIngestion() {
         if (known.has(id)) continue;
         known.add(id);
 
-        let classification;
+        let included;
         try {
-          classification = await classifyArticle({
+          included = await filter.decide({
             headline: item.headline,
             byline: item.byline,
             sourceName: source.name,
-            preferences: state.preferences,
-            feedback: state.feedback,
-            topicPreferences: state.topicPreferences,
           });
         } catch (error) {
-          console.warn(`Could not rank "${item.headline}":`, error);
+          console.warn(`Could not filter "${item.headline}":`, error);
           continue;
         }
 
-        if (
-          !classification.matches ||
-          classification.score < state.preferences.minimumScore
-        ) {
+        if (!included) {
           await markSeen(id);
           continue;
         }
 
         try {
           const article = await fetchArticle(item.url);
-          const summary = await summarizeArticle({
-            headline: item.headline,
-            byline: item.byline,
-            content: article.text,
-          });
+          const analysis = await analyseArticle(
+            `${item.headline}\n\n${item.byline}\n\n${article.text}`,
+          );
           const publisherImage = item.imageUrl ?? article.imageUrl;
           const image = publisherImage
             ? {
@@ -85,21 +78,19 @@ export async function runIngestion() {
                 alt: `Image supplied with “${item.headline}”`,
                 kind: "article" as const,
               }
-            : relatedImageForTopics(classification.topics);
+            : relatedImageForTopics(analysis.tags);
           accepted.push({
             id,
             sourceId: source.id,
             sourceName: source.name,
             url: item.url,
-            headline: item.headline,
+            headline: analysis.headline,
             byline: item.byline,
             publishedAt: item.publishedAt,
             discoveredAt: new Date().toISOString(),
-            score: Math.round(classification.score),
-            reason: classification.reason,
-            topics: classification.topics,
-            summary: summary.summary,
-            bullets: summary.bullets,
+            topics: analysis.tags,
+            summary: analysis.summary,
+            pointsMarkdown: analysis.pointsMarkdown,
             imageUrl: image.url,
             imageAlt: image.alt,
             imageKind: image.kind,
@@ -108,7 +99,7 @@ export async function runIngestion() {
           });
           await markSeen(id);
         } catch (error) {
-          console.warn(`Skipped summary for "${item.headline}":`, error);
+          console.warn(`Skipped analysis for "${item.headline}":`, error);
         }
       }
     } catch (error) {

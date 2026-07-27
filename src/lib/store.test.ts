@@ -19,8 +19,6 @@ test("stores topic ratings and hides stories rated with dislikes only", async ()
       headline: "The Boring Company raises infrastructure funding",
       byline: "Alex Reporter",
       discoveredAt: new Date().toISOString(),
-      score: 92,
-      reason: "Matches technology and infrastructure interests.",
       topics: [
         "Elon Musk",
         "Boring Company",
@@ -30,7 +28,8 @@ test("stores topic ratings and hides stories rated with dislikes only", async ()
         "venture capital",
       ],
       summary: "The company is raising new capital for tunnelling projects.",
-      bullets: ["The funding values the company at a reported $20 billion."],
+      pointsMarkdown:
+        "- The funding values the company at a reported $20 billion.",
       imageUrl: "https://example.com/tunnel.jpg",
       imageAlt: "Tunnel",
       imageKind: "article",
