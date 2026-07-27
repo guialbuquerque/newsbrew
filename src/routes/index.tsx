@@ -16,7 +16,14 @@ import {
   Trash2,
   X,
 } from "lucide-solid";
-import { For, Show, createMemo, createSignal, onMount } from "solid-js";
+import {
+  For,
+  Show,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Card } from "~/components/ui/card";
@@ -25,6 +32,7 @@ import type {
   Article,
   DashboardState,
   Reaction,
+  RefreshProgress,
   TopicRating,
 } from "~/lib/types";
 
@@ -41,6 +49,30 @@ function formatWhen(value?: string) {
 
 function readError(value: unknown) {
   return value instanceof Error ? value.message : "Something went wrong";
+}
+
+function progressMessage(progress: RefreshProgress) {
+  if (progress.phase === "downloading") {
+    return `${progress.sources.completed}/${progress.sources.total} sources downloaded`;
+  }
+  if (progress.phase === "filtering") {
+    return `${progress.filters.completed}/${progress.filters.total} articles filtered · ${progress.filters.accepted} accepted`;
+  }
+  if (progress.phase === "analysing") {
+    return `${progress.analyses.completed}/${progress.analyses.total} articles analysed · ${progress.analyses.stored} added · ${progress.analyses.rejected} rejected`;
+  }
+  if (progress.phase === "completed") {
+    return `Refresh complete · ${progress.analyses.stored} added · ${progress.analyses.rejected} rejected`;
+  }
+  if (progress.phase === "failed") {
+    return progress.error
+      ? `Refresh failed: ${progress.error}`
+      : "Refresh failed.";
+  }
+  if (progress.phase === "stopped") {
+    return "Refresh stopped · unfinished work discarded";
+  }
+  return "";
 }
 
 function ArticleImage(props: { article: Article }) {
@@ -74,6 +106,9 @@ export default function Home() {
   const [state, setState] = createSignal<DashboardState>();
   const [loading, setLoading] = createSignal(true);
   const [refreshing, setRefreshing] = createSignal(false);
+  const [stopping, setStopping] = createSignal(false);
+  const [refreshProgress, setRefreshProgress] =
+    createSignal<RefreshProgress>();
   const [savingRating, setSavingRating] = createSignal(false);
   const [panelOpen, setPanelOpen] = createSignal(false);
   const [notice, setNotice] = createSignal("");
@@ -111,7 +146,63 @@ export default function Home() {
     }
   }
 
-  onMount(() => load());
+  function applyProgress(progress: RefreshProgress) {
+    setRefreshProgress(progress);
+    if (progress.status === "running") {
+      setRefreshing(true);
+      if (!stopping()) setNotice(progressMessage(progress));
+      return;
+    }
+    if (progress.status === "completed") {
+      setRefreshing(false);
+      setStopping(false);
+      setNotice(progressMessage(progress));
+      void load();
+      return;
+    }
+    if (progress.status === "failed") {
+      setRefreshing(false);
+      setStopping(false);
+      setNotice(progressMessage(progress));
+      return;
+    }
+    if (progress.status === "stopped") {
+      setRefreshing(false);
+      setStopping(false);
+      setNotice(progressMessage(progress));
+    }
+  }
+
+  onMount(() => {
+    void load();
+    let stopped = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let socket: WebSocket | undefined;
+
+    const connect = () => {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      socket = new WebSocket(
+        `${protocol}//${window.location.host}/api/refresh-status`,
+      );
+      socket.addEventListener("message", (event) => {
+        try {
+          applyProgress(JSON.parse(String(event.data)) as RefreshProgress);
+        } catch {
+          setNotice("Received an invalid refresh status update.");
+        }
+      });
+      socket.addEventListener("close", () => {
+        if (!stopped) reconnectTimer = setTimeout(connect, 1_500);
+      });
+    };
+
+    connect();
+    onCleanup(() => {
+      stopped = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      socket?.close();
+    });
+  });
 
   function isExpanded(id: string) {
     return expandedIds().includes(id);
@@ -126,20 +217,40 @@ export default function Home() {
   }
 
   async function refresh() {
+    setStopping(false);
     setRefreshing(true);
-    setNotice("Checking sources and asking your local model…");
+    setNotice("Starting refresh…");
     try {
       const response = await fetch("/api/refresh", { method: "POST" });
       if (!response.ok) {
         const body = (await response.json()) as { error?: string };
         throw new Error(body.error ?? "Refresh failed");
       }
-      await load();
-      setNotice("Your digest is up to date.");
+      const body = (await response.json()) as {
+        status: "started" | "already_running";
+        progress: RefreshProgress;
+      };
+      applyProgress(body.progress);
     } catch (error) {
       setNotice(readError(error));
-    } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function stopRefresh() {
+    setStopping(true);
+    setNotice("Stopping refresh…");
+    try {
+      const response = await fetch("/api/refresh", { method: "DELETE" });
+      if (!response.ok) throw new Error("Could not stop the refresh");
+      const body = (await response.json()) as {
+        status: "stopping" | "idle";
+        progress: RefreshProgress;
+      };
+      if (body.status === "idle") applyProgress(body.progress);
+    } catch (error) {
+      setStopping(false);
+      setNotice(readError(error));
     }
   }
 
@@ -341,7 +452,35 @@ export default function Home() {
       <main class="app-shell">
         <section class="feed-column">
           <Show when={notice()}>
-            <div class="notice" role="status">{notice()}</div>
+            <div
+              classList={{
+                notice: true,
+                "refresh-notice": Boolean(refreshProgress()),
+              }}
+              style={`--refresh-progress: ${refreshProgress()?.percent ?? 0}%`}
+            >
+              <div class="notice-status">
+                <Show when={refreshing()}>
+                  <LoaderCircle
+                    class="notice-spinner animate-spin"
+                    aria-hidden="true"
+                    size={14}
+                  />
+                </Show>
+                <span role="status" aria-live="polite">{notice()}</span>
+                <Show when={refreshing()}>
+                  <button
+                    class="stop-refresh"
+                    type="button"
+                    disabled={stopping()}
+                    onClick={stopRefresh}
+                  >
+                    <X size={12} />
+                    {stopping() ? "Stopping…" : "Stop"}
+                  </button>
+                </Show>
+              </div>
+            </div>
           </Show>
 
           <Show

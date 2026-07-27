@@ -100,12 +100,15 @@ export async function fetchModelContext(options: {
   model: string;
   apiKey: string;
   fetch?: typeof globalThis.fetch;
+  signal?: AbortSignal;
 }) {
   const response = await (options.fetch ?? globalThis.fetch)(
     modelListURL(options.baseURL),
     {
       headers: { Authorization: `Bearer ${options.apiKey}` },
-      signal: AbortSignal.timeout(10_000),
+      signal: options.signal
+        ? AbortSignal.any([options.signal, AbortSignal.timeout(10_000)])
+        : AbortSignal.timeout(10_000),
     },
   );
   if (!response.ok) {

@@ -31,6 +31,7 @@ The user will send a complete article. Use only facts contained in that article.
 
 For the initial analysis:
 - Respond only with valid JSON matching the requested schema. Do not wrap JSON in Markdown fences.
+- Set rejected to true only when the supplied text is not a usable news article, is substantially unrelated to its stated headline, or lacks enough factual content to produce a trustworthy analysis. Otherwise set it to false.
 - Preserve or clean up the article's factual headline without making it more sensational.
 - Write a concise one- or two-sentence summary suitable for two or three interface lines.
 - Extract 1-10 concise, independently rateable tags. Prefer named subjects, organisations, places, fields, activities, products, events, and specific facets. Do not tag the author or publisher unless the article is about them.

@@ -5,6 +5,7 @@ import { config } from "./config.ts";
 import type {
   AppState,
   Article,
+  FilterResult,
   Reaction,
   Source,
   TopicPreference,
@@ -89,7 +90,8 @@ database.exec(`
     image_url TEXT NOT NULL,
     image_alt TEXT NOT NULL,
     image_kind TEXT NOT NULL CHECK (image_kind IN ('article', 'related')),
-    hidden INTEGER NOT NULL DEFAULT 0
+    hidden INTEGER NOT NULL DEFAULT 0,
+    rejected INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS article_topics (
@@ -122,6 +124,15 @@ database.exec(`
     seen_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS filter_results (
+    id INTEGER PRIMARY KEY,
+    url TEXT NOT NULL,
+    headline TEXT NOT NULL,
+    published_at TEXT,
+    included INTEGER NOT NULL CHECK (included IN (0, 1)),
+    filtered_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS app_meta (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -131,7 +142,18 @@ database.exec(`
     ON articles(discovered_at DESC);
   CREATE INDEX IF NOT EXISTS ratings_created_at
     ON article_topic_ratings(created_at DESC);
+  CREATE INDEX IF NOT EXISTS filter_results_filtered_at
+    ON filter_results(filtered_at DESC);
 `);
+
+const articleColumns = database
+  .prepare("PRAGMA table_info(articles)")
+  .all() as Array<{ name: string }>;
+if (!articleColumns.some((column) => column.name === "rejected")) {
+  database.exec(
+    "ALTER TABLE articles ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0",
+  );
+}
 
 function topicKey(topic: string) {
   return topic.trim().toLocaleLowerCase("en-GB").replace(/\s+/g, " ");
@@ -184,8 +206,8 @@ function insertArticle(article: Article) {
       INSERT INTO articles (
         id, source_id, source_name, url, headline, byline, published_at,
         discovered_at, summary, points_markdown, image_url, image_alt,
-        image_kind, hidden
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        image_kind, hidden, rejected
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         source_name = excluded.source_name,
         url = excluded.url,
@@ -196,7 +218,8 @@ function insertArticle(article: Article) {
         points_markdown = excluded.points_markdown,
         image_url = excluded.image_url,
         image_alt = excluded.image_alt,
-        image_kind = excluded.image_kind
+        image_kind = excluded.image_kind,
+        rejected = excluded.rejected
     `)
     .run(
       article.id,
@@ -213,6 +236,7 @@ function insertArticle(article: Article) {
       article.imageAlt,
       article.imageKind,
       article.hidden ? 1 : 0,
+      article.rejected ? 1 : 0,
     );
 
   database
@@ -289,12 +313,15 @@ export async function readState(): Promise<AppState> {
         discovered_at AS discoveredAt, summary,
         points_markdown AS pointsMarkdown,
         image_url AS imageUrl, image_alt AS imageAlt,
-        image_kind AS imageKind, hidden
-      FROM articles ORDER BY discovered_at DESC LIMIT 250
+        image_kind AS imageKind, hidden, rejected
+      FROM articles
+      WHERE rejected = 0
+      ORDER BY discovered_at DESC LIMIT 250
     `)
     .all() as Array<
-    Omit<Article, "topics" | "topicRatings" | "hidden"> & {
+    Omit<Article, "topics" | "topicRatings" | "hidden" | "rejected"> & {
       hidden: number;
+      rejected: number;
     }
   >;
 
@@ -329,6 +356,7 @@ export async function readState(): Promise<AppState> {
   const articles: Article[] = articleRows.map((row) => ({
     ...row,
     hidden: Boolean(row.hidden),
+    rejected: Boolean(row.rejected),
     topics: topicsByArticle.get(row.id) ?? [],
     topicRatings: ratingsByArticle.get(row.id) ?? [],
   }));
@@ -341,13 +369,18 @@ export async function readState(): Promise<AppState> {
     `)
     .all() as TopicPreference[];
 
-  const seen = database
+  const recentSeen = database
     .prepare(`
       SELECT article_id AS articleId
       FROM seen_articles ORDER BY seen_at DESC LIMIT 2000
     `)
     .all()
     .map((row) => String((row as { articleId: string }).articleId));
+  const rejectedArticleIds = database
+    .prepare("SELECT id FROM articles WHERE rejected = 1")
+    .all()
+    .map((row) => String((row as { id: string }).id));
+  const seen = [...new Set([...recentSeen, ...rejectedArticleIds])];
 
   const metadata = Object.fromEntries(
     (
@@ -461,6 +494,45 @@ export async function markSeen(id: string) {
   `);
 }
 
+export async function recordFilterResult(result: FilterResult) {
+  database
+    .prepare(`
+      INSERT INTO filter_results
+        (url, headline, published_at, included, filtered_at)
+      VALUES (?, ?, ?, ?, ?)
+    `)
+    .run(
+      result.url,
+      result.headline,
+      result.publishedAt ?? null,
+      result.included ? 1 : 0,
+      result.filteredAt,
+    );
+}
+
+export async function deleteOldFilterResults(now = new Date()) {
+  const cutoff = new Date(now);
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - 2);
+  return database
+    .prepare("DELETE FROM filter_results WHERE filtered_at < ?")
+    .run(cutoff.toISOString()).changes;
+}
+
+export async function readFilterResults(): Promise<FilterResult[]> {
+  return (
+    database
+      .prepare(`
+        SELECT id, url, headline, published_at AS publishedAt,
+          included, filtered_at AS filteredAt
+        FROM filter_results ORDER BY id
+      `)
+      .all() as Array<Omit<FilterResult, "included"> & { included: number }>
+  ).map((result) => ({
+    ...result,
+    included: Boolean(result.included),
+  }));
+}
+
 export async function updateSourceStatus(source: Source) {
   database
     .prepare(`
@@ -489,8 +561,77 @@ export async function mergeArticles(articles: Article[]) {
     for (const article of articles) insertArticle(article);
     database.exec(`
       DELETE FROM articles
-      WHERE id NOT IN (
-        SELECT id FROM articles ORDER BY discovered_at DESC LIMIT 250
+      WHERE rejected = 0 AND id NOT IN (
+        SELECT id FROM articles
+        WHERE rejected = 0
+        ORDER BY discovered_at DESC LIMIT 250
+      )
+    `);
+    database.exec(`
+      DELETE FROM articles
+      WHERE rejected = 1 AND id NOT IN (
+        SELECT id FROM articles
+        WHERE rejected = 1
+        ORDER BY discovered_at DESC LIMIT 250
+      )
+    `);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function commitIngestionRun(input: {
+  filterResults: FilterResult[];
+  seenArticleIds: string[];
+  articles: Article[];
+}) {
+  const insertFilterResult = database.prepare(`
+    INSERT INTO filter_results
+      (url, headline, published_at, included, filtered_at)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  const insertSeen = database.prepare(`
+    INSERT OR IGNORE INTO seen_articles (article_id, seen_at) VALUES (?, ?)
+  `);
+  const seenAt = new Date().toISOString();
+
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    for (const result of input.filterResults) {
+      insertFilterResult.run(
+        result.url,
+        result.headline,
+        result.publishedAt ?? null,
+        result.included ? 1 : 0,
+        result.filteredAt,
+      );
+    }
+    for (const id of input.seenArticleIds) {
+      insertSeen.run(id, seenAt);
+    }
+    for (const article of input.articles) insertArticle(article);
+    database.exec(`
+      DELETE FROM seen_articles
+      WHERE article_id NOT IN (
+        SELECT article_id FROM seen_articles ORDER BY seen_at DESC LIMIT 2000
+      )
+    `);
+    database.exec(`
+      DELETE FROM articles
+      WHERE rejected = 0 AND id NOT IN (
+        SELECT id FROM articles
+        WHERE rejected = 0
+        ORDER BY discovered_at DESC LIMIT 250
+      )
+    `);
+    database.exec(`
+      DELETE FROM articles
+      WHERE rejected = 1 AND id NOT IN (
+        SELECT id FROM articles
+        WHERE rejected = 1
+        ORDER BY discovered_at DESC LIMIT 250
       )
     `);
     database.exec("COMMIT");

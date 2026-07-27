@@ -26,14 +26,16 @@ function imageUrl(document: Document, articleUrl: string) {
   }
 }
 
-export async function fetchArticle(url: string) {
+export async function fetchArticle(url: string, signal?: AbortSignal) {
   const response = await fetch(url, {
     headers: {
       "User-Agent":
         "Mozilla/5.0 (compatible; Newsbrew/0.1; personal-use)",
       Accept: "text/html,application/xhtml+xml",
     },
-    signal: AbortSignal.timeout(15_000),
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
+      : AbortSignal.timeout(15_000),
   });
   if (!response.ok) throw new Error(`Article returned ${response.status}`);
   const html = await response.text();

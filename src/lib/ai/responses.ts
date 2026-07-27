@@ -22,12 +22,13 @@ export type TurnResult<T> = {
   totalTokens?: number;
 };
 
-export function createResponsesClient() {
+export function createResponsesClient(abortController?: AbortController) {
   const tracker = new ResponseMetadataTracker();
   const context = fetchModelContext({
     baseURL: config.lmStudioBaseURL,
     model: config.lmStudioModel,
     apiKey: config.lmStudioApiKey,
+    signal: abortController?.signal,
   });
   const provider = openaiCompatible({
     name: "lm-studio",
@@ -88,6 +89,7 @@ export function createResponsesClient() {
           messages: [{ role: "user", content: options.prompt }],
           modelOptions: modelOptions(options),
           stream: false,
+          abortController,
         }),
       );
     },
@@ -100,6 +102,7 @@ export function createResponsesClient() {
           messages: [{ role: "user", content: options.prompt }],
           modelOptions: modelOptions(options),
           outputSchema: options.schema,
+          abortController,
         });
         return output as T;
       });

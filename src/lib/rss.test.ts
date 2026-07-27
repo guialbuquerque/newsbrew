@@ -31,6 +31,29 @@ test("parses Atom links and nested author names", () => {
   assert.equal(items[0]?.byline, "Sam Lee");
 });
 
+test("parses Atom text constructs with attributes and CDATA", () => {
+  const items = parseFeed(`
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <entry>
+        <author><name>Jay Peters</name></author>
+        <title type="html"><![CDATA[Xbox’s outage blocked disc games]]></title>
+        <link rel="alternate" type="text/html"
+          href="https://www.theverge.com/games/xbox-outage" />
+        <published>2026-07-27T15:53:50-04:00</published>
+      </entry>
+    </feed>
+  `);
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.headline, "Xbox’s outage blocked disc games");
+  assert.equal(items[0]?.byline, "Jay Peters");
+  assert.equal(
+    items[0]?.url,
+    "https://www.theverge.com/games/xbox-outage",
+  );
+  assert.equal(items[0]?.publishedAt, "2026-07-27T19:53:50.000Z");
+});
+
 test("extracts publisher-provided feed images", () => {
   const items = parseFeed(`
     <rss><channel><item>

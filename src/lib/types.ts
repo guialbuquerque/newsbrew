@@ -36,6 +36,51 @@ export type Article = {
   imageKind: ImageKind;
   topicRatings: TopicRating[];
   hidden: boolean;
+  rejected: boolean;
+};
+
+export type FilterResult = {
+  id?: number;
+  url: string;
+  headline: string;
+  publishedAt?: string;
+  included: boolean;
+  filteredAt: string;
+};
+
+export type RefreshProgress = {
+  runId?: string;
+  status: "idle" | "running" | "completed" | "failed" | "stopped";
+  phase:
+    | "idle"
+    | "downloading"
+    | "filtering"
+    | "analysing"
+    | "completed"
+    | "failed"
+    | "stopped";
+  percent: number;
+  startedAt?: string;
+  completedAt?: string;
+  sources: {
+    completed: number;
+    total: number;
+    failed: number;
+  };
+  filters: {
+    completed: number;
+    total: number;
+    accepted: number;
+    failed: number;
+  };
+  analyses: {
+    completed: number;
+    total: number;
+    stored: number;
+    rejected: number;
+    failed: number;
+  };
+  error?: string;
 };
 
 export type AppState = {

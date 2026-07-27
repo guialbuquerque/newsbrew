@@ -21,6 +21,13 @@ function arrayOf<T>(value: T | T[] | undefined): T[] {
   return Array.isArray(value) ? value : [value];
 }
 
+function textFrom(value: unknown) {
+  if (value && typeof value === "object") {
+    return cleanText((value as Record<string, unknown>)["#text"]);
+  }
+  return cleanText(value);
+}
+
 function linkFrom(value: unknown): string {
   if (typeof value === "string") return value;
   if (value && typeof value === "object") {
@@ -31,7 +38,13 @@ function linkFrom(value: unknown): string {
 }
 
 function firstLink(value: unknown): string {
-  for (const candidate of arrayOf(value)) {
+  const candidates = arrayOf(value);
+  const preferred = candidates.filter((candidate) => {
+    if (!candidate || typeof candidate !== "object") return true;
+    const rel = (candidate as Record<string, unknown>)["@_rel"];
+    return rel === undefined || rel === "alternate";
+  });
+  for (const candidate of [...preferred, ...candidates]) {
     const link = linkFrom(candidate);
     if (link) return link;
   }
@@ -41,9 +54,9 @@ function firstLink(value: unknown): string {
 function authorFrom(item: Record<string, unknown>) {
   const author = item.author;
   if (typeof author === "object" && author !== null) {
-    return cleanText((author as Record<string, unknown>).name);
+    return textFrom((author as Record<string, unknown>).name);
   }
-  return cleanText(author ?? item.creator ?? item["dc:creator"]);
+  return textFrom(author ?? item.creator ?? item["dc:creator"]);
 }
 
 function imageFrom(item: Record<string, unknown>) {
@@ -77,10 +90,12 @@ export function parseFeed(xml: string): FeedItem[] {
     .map((raw): FeedItem | null => {
       if (!raw || typeof raw !== "object") return null;
       const item = raw as Record<string, unknown>;
-      const headline = cleanText(item.title);
-      const url = firstLink(item.link) || cleanText(item.guid);
+      const headline = textFrom(item.title);
+      const url = firstLink(item.link) || textFrom(item.guid);
       if (!headline || !url) return null;
-      const published = cleanText(item.pubDate ?? item.published ?? item.updated);
+      const published = textFrom(
+        item.pubDate ?? item.published ?? item.updated,
+      );
       const parsedDate = published ? new Date(published) : undefined;
       return {
         id: stableId(url),

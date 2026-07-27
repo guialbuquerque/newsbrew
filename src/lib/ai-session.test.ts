@@ -6,6 +6,7 @@ import {
 } from "./ai/response-metadata.ts";
 import { modelListURL, parseModelContext } from "./ai/model-context.ts";
 import { filterSystemPrompt } from "./ai/prompts.ts";
+import { parseFilterDecision } from "./ai.ts";
 
 test("filter prompt contains topic signals and requires a binary answer", () => {
   const prompt = filterSystemPrompt([
@@ -17,6 +18,15 @@ test("filter prompt contains topic signals and requires a binary answer", () => 
   assert.match(prompt, /Negative topics:\n- celebrity gossip/);
   assert.match(prompt, /exactly YES or NO/);
   assert.doesNotMatch(prompt, /score|rubric|recent feedback/i);
+});
+
+test("accepts filter answers that start with yes or no", () => {
+  assert.equal(parseFilterDecision("YES\nYES"), true);
+  assert.equal(parseFilterDecision("  no\nNO"), false);
+  assert.throws(
+    () => parseFilterDecision("The answer is YES"),
+    /did not start its answer/,
+  );
 });
 
 test("reads response metadata from a JSON response", async () => {

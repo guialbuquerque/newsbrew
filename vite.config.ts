@@ -7,6 +7,14 @@ export default defineConfig({
   plugins: [
     solidStart(),
     tailwindcss(),
-    nitro()
+    nitro({
+      features: {
+        websocket: true,
+      },
+      routes: {
+        "/api/refresh": "./server/routes/api/refresh.ts",
+        "/api/refresh-status": "./server/routes/api/refresh-status.ts",
+      },
+    }),
   ]
 });
