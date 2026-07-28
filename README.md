@@ -25,26 +25,57 @@ Everything is stored locally in `data/news.sqlite` using Node's built-in
 
 - Node 24 or newer
 - pnpm
-- LM Studio with its local server enabled
+- An OpenAI Responses-compatible model endpoint, such as LM Studio
 
-All runtime configuration is required. The app loads `.env` from its working
-directory when that file exists; otherwise it reads the same values directly
-from the process environment. Process-provided values take precedence, which
-allows the same configuration to work in Docker without copying a `.env`
-file.
+Runtime, model, source, topic, and authentication settings are stored in
+SQLite. Access is open by default; an optional shared access token can be set
+in the Settings drawer or imported with the rest of the configuration.
 
-```dotenv
-LM_STUDIO_BASE_URL=http://127.0.0.1:1234/v1
-LM_STUDIO_MODEL=google/gemma-4-26b-a4b-qat
-LM_STUDIO_API_KEY=lm-studio
-POLL_INTERVAL_MINUTES=30
-MAX_ITEMS_PER_SOURCE=8
-NEWS_DATABASE_FILE=./data/news.sqlite
+Settings can be imported from `newsbrew.json`, from a file selected by
+`NEWSBREW_CONFIG_FILE`, or directly from the JSON stored in
+`NEWSBREW_CONFIG_JSON`. Inline JSON takes precedence over a configured file.
+Imports are transactional and only run again when the JSON content changes.
+
+```bash
+NEWSBREW_CONFIG_FILE=/run/secrets/newsbrew.json pnpm start
 ```
 
-The app throws a descriptive startup error if any value is absent or if either
-numeric value is not positive. `.env.example` documents the complete contract;
-the local `.env` is ignored by git.
+Or provide the same object directly:
+
+```bash
+NEWSBREW_CONFIG_JSON='{"databaseFile":"./data/news.sqlite","runtime":{"pollIntervalMinutes":30,"maxItemsPerSource":8}}' pnpm start
+```
+
+To initialise a database or force a configuration snapshot back into an
+existing database, pass its path to the import command:
+
+```bash
+pnpm settings:import -- ./newsbrew.dev.json
+```
+
+Export the current database-backed settings to the default ignored
+`newsbrew.json`, or pass another destination:
+
+```bash
+pnpm settings:export
+pnpm settings:export -- ./newsbrew.dev.json
+```
+
+Exports are written atomically with owner-only file permissions. Since access
+tokens are stored as one-way hashes, export preserves one only when the
+destination already contains its plaintext value; otherwise auth is omitted
+instead of silently disabling an existing token.
+
+The command validates the JSON, opens the database selected by
+`databaseFile`, transactionally applies the settings, and prints a
+non-sensitive import summary. `newsbrew.dev.json` is ignored by git.
+
+See `newsbrew.example.json` for the complete structure. Set
+`auth.accessToken` to a shared token or leave it as an empty string to disable
+authentication. Newsbrew stores a salted token hash in SQLite and accepts the
+token through the login screen or an `Authorization: Bearer` header.
+Configuration files and the SQLite database should be treated as sensitive
+because they may contain API keys or an access token.
 
 ## Commands
 
@@ -74,8 +105,8 @@ pnpm build
   read-only. The same `-- --limit=2` and `-- --source=ars-technica` options
   apply. To save a clean log, use
   `pnpm --silent tune:analyser > analyser-run.jsonl`.
-- `pnpm worker` scans immediately and then every
-  `POLL_INTERVAL_MINUTES` minutes.
+- `pnpm worker` scans immediately and then uses the polling interval stored in
+  the database.
 
 Both ingestion commands run TypeScript directly with Node's
 `--experimental-strip-types` flag. The TypeScript configuration enables

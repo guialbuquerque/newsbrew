@@ -7,10 +7,19 @@ import type { Article } from "./types.ts";
 
 test("stores ratings, rejected articles, and retained filter decisions", async () => {
   const directory = mkdtempSync(join(tmpdir(), "signal-desk-store-"));
-  process.env.NEWS_DATABASE_FILE = join(directory, "news.sqlite");
+  process.env.NEWSBREW_CONFIG_JSON = JSON.stringify({
+    databaseFile: join(directory, "news.sqlite"),
+  });
 
   try {
     const store = await import("./store.ts");
+    assert.equal(store.accessTokenRequired(), false);
+    assert.equal(store.setAccessToken("Newsbrew-Access!42"), true);
+    assert.equal(store.verifyAccessToken("incorrect"), false);
+    assert.equal(store.verifyAccessToken("Newsbrew-Access!42"), true);
+    assert.equal(store.setAccessToken(""), false);
+    assert.equal(store.accessTokenRequired(), false);
+
     const article: Article = {
       id: "funding-story",
       sourceId: "bbc-news",
@@ -129,6 +138,7 @@ test("stores ratings, rejected articles, and retained filter decisions", async (
       false,
     );
   } finally {
+    delete process.env.NEWSBREW_CONFIG_JSON;
     rmSync(directory, { recursive: true, force: true });
   }
 });

@@ -2,9 +2,12 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Cog,
   ExternalLink,
   EyeOff,
+  KeyRound,
   LoaderCircle,
+  LogOut,
   Newspaper,
   Plus,
   Radio,
@@ -30,11 +33,13 @@ import { Card } from "~/components/ui/card";
 import { relatedImageForTopics } from "~/lib/images";
 import type {
   Article,
+  AuthStatus,
   DashboardState,
   Reaction,
   RefreshProgress,
   TopicRating,
 } from "~/lib/types";
+import "~/settings.css";
 
 function formatWhen(value?: string) {
   if (!value) return "Not run yet";
@@ -104,6 +109,9 @@ function ArticleImage(props: { article: Article }) {
 
 export default function Home() {
   const [state, setState] = createSignal<DashboardState>();
+  const [auth, setAuth] = createSignal<AuthStatus>();
+  const [authLoading, setAuthLoading] = createSignal(true);
+  const [authBusy, setAuthBusy] = createSignal(false);
   const [loading, setLoading] = createSignal(true);
   const [refreshing, setRefreshing] = createSignal(false);
   const [stopping, setStopping] = createSignal(false);
@@ -119,6 +127,15 @@ export default function Home() {
   >({});
   const [sourceName, setSourceName] = createSignal("");
   const [sourceUrl, setSourceUrl] = createSignal("");
+  const [topicName, setTopicName] = createSignal("");
+  const [topicReaction, setTopicReaction] = createSignal<Reaction>("like");
+  const [pollInterval, setPollInterval] = createSignal("30");
+  const [maxItems, setMaxItems] = createSignal("8");
+  const [llmBaseURL, setLlmBaseURL] = createSignal("");
+  const [llmModel, setLlmModel] = createSignal("");
+  const [llmApiKey, setLlmApiKey] = createSignal("");
+  const [accessTokenAttempt, setAccessTokenAttempt] = createSignal("");
+  const [accessTokenDraft, setAccessTokenDraft] = createSignal("");
 
   const likedTopics = createMemo(
     () =>
@@ -135,9 +152,17 @@ export default function Home() {
   async function load(options: { clearNotice?: boolean } = {}) {
     try {
       const response = await fetch("/api/state");
+      if (response.status === 401) {
+        setLoading(false);
+        return;
+      }
       if (!response.ok) throw new Error("Could not load your digest");
       const next = (await response.json()) as DashboardState;
       setState(next);
+      setPollInterval(String(next.runtime.pollIntervalMinutes));
+      setMaxItems(String(next.runtime.maxItemsPerSource));
+      setLlmBaseURL(next.llm.baseURL);
+      setLlmModel(next.llm.model);
       if (options.clearNotice) setNotice("");
     } catch (error) {
       setNotice(readError(error));
@@ -203,6 +228,112 @@ export default function Home() {
       socket?.close();
     });
   });
+
+  async function loadAuth() {
+    try {
+      const response = await fetch("/api/auth?action=status");
+      if (!response.ok) throw new Error("Could not check authentication");
+      const next = (await response.json()) as AuthStatus;
+      setAuth(next);
+      if (next.authenticated) await load({ clearNotice: true });
+      else setLoading(false);
+    } catch (error) {
+      setNotice(readError(error));
+      setLoading(false);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  onMount(() => loadAuth());
+
+  async function signIn() {
+    setAuthBusy(true);
+    setNotice("");
+    try {
+      const response = await fetch("/api/auth?action=authenticate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: accessTokenAttempt() }),
+      });
+      const result = (await response.json()) as {
+        authenticated?: boolean;
+        error?: string;
+      };
+      if (!response.ok || !result.authenticated) {
+        throw new Error(result.error ?? "Incorrect access token");
+      }
+      setAccessTokenAttempt("");
+      await loadAuth();
+    } catch (error) {
+      setNotice(readError(error));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  function randomIndex(length: number) {
+    const limit = 256 - (256 % length);
+    const bytes = new Uint8Array(1);
+    do {
+      crypto.getRandomValues(bytes);
+    } while (bytes[0] >= limit);
+    return bytes[0] % length;
+  }
+
+  function generateAccessToken() {
+    const groups = [
+      "ABCDEFGHJKLMNPQRSTUVWXYZ",
+      "abcdefghijkmnopqrstuvwxyz",
+      "23456789",
+      "!@#$%&*+-=?_",
+    ];
+    const all = groups.join("");
+    const characters = groups.map((group) => group[randomIndex(group.length)]);
+    while (characters.length < 32) {
+      characters.push(all[randomIndex(all.length)]);
+    }
+    for (let index = characters.length - 1; index > 0; index -= 1) {
+      const swap = randomIndex(index + 1);
+      [characters[index], characters[swap]] = [
+        characters[swap],
+        characters[index],
+      ];
+    }
+    setAccessTokenDraft(characters.join(""));
+  }
+
+  async function saveAccessToken() {
+    setAuthBusy(true);
+    try {
+      const response = await fetch("/api/auth?action=configure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: accessTokenDraft() }),
+      });
+      const result = (await response.json()) as AuthStatus & {
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(result.error ?? "Could not save access settings");
+      }
+      setAuth(result);
+      setNotice(
+        result.required
+          ? "Access token saved. Keep a copy somewhere safe."
+          : "Access token removed. Authentication is disabled.",
+      );
+    } catch (error) {
+      setNotice(readError(error));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function signOut() {
+    await fetch("/api/auth?action=logout", { method: "POST" });
+    window.location.reload();
+  }
 
   function isExpanded(id: string) {
     return expandedIds().includes(id);
@@ -311,6 +442,66 @@ export default function Home() {
     }
   }
 
+  async function addTopic(event: SubmitEvent) {
+    event.preventDefault();
+    try {
+      const response = await fetch("/api/topics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: topicName(),
+          reaction: topicReaction(),
+        }),
+      });
+      if (!response.ok) throw new Error("Could not add topic");
+      setTopicName("");
+      await load();
+      setNotice("Topic added.");
+    } catch (error) {
+      setNotice(readError(error));
+    }
+  }
+
+  async function removeTopic(topic: string) {
+    try {
+      const response = await fetch(
+        `/api/topics?topic=${encodeURIComponent(topic)}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok) throw new Error("Could not remove topic");
+      await load();
+      setNotice("Topic removed.");
+    } catch (error) {
+      setNotice(readError(error));
+    }
+  }
+
+  async function saveSettings(event: SubmitEvent) {
+    event.preventDefault();
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pollIntervalMinutes: Number(pollInterval()),
+          maxItemsPerSource: Number(maxItems()),
+          llmBaseURL: llmBaseURL(),
+          llmModel: llmModel(),
+          ...(llmApiKey() ? { llmApiKey: llmApiKey() } : {}),
+        }),
+      });
+      const body = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(body.error ?? "Could not save settings");
+      }
+      setLlmApiKey("");
+      await load();
+      setNotice("Settings saved.");
+    } catch (error) {
+      setNotice(readError(error));
+    }
+  }
+
   async function addSource(event: SubmitEvent) {
     event.preventDefault();
     try {
@@ -413,6 +604,42 @@ export default function Home() {
 
   return (
     <div class="min-h-screen bg-[var(--canvas)] text-[var(--ink)]">
+      <Show when={!authLoading() && !auth()?.authenticated}>
+        <div class="auth-gate">
+          <Card class="auth-card">
+            <span class="auth-mark"><KeyRound size={24} /></span>
+            <p class="auth-eyebrow">PRIVATE BRIEFING</p>
+            <h1>Open Newsbrew</h1>
+            <p>Enter the access token configured for this Newsbrew instance.</p>
+            <form
+              class="auth-token-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void signIn();
+              }}
+            >
+              <input
+                required
+                type="text"
+                autocomplete="off"
+                spellcheck={false}
+                placeholder="Access token"
+                value={accessTokenAttempt()}
+                onInput={(event) =>
+                  setAccessTokenAttempt(event.currentTarget.value)
+                }
+              />
+              <Button type="submit" variant="accent" disabled={authBusy()}>
+                <KeyRound size={15} />
+                {authBusy() ? "Checking…" : "Open Newsbrew"}
+              </Button>
+            </form>
+            <Show when={notice()}>
+              <div class="notice" role="status">{notice()}</div>
+            </Show>
+          </Card>
+        </div>
+      </Show>
       <header class="topbar">
         <a href="/" class="brand" aria-label="Newsbrew home">
           <span class="brand-mark"><Newspaper size={17} /></span>
@@ -430,10 +657,9 @@ export default function Home() {
           <Button
             variant="outline"
             size="sm"
-            class="lg:hidden"
             onClick={() => setPanelOpen(true)}
           >
-            <SlidersHorizontal size={14} /> Tune
+            <Cog size={14} /> Settings
           </Button>
           <Button
             variant="accent"
@@ -617,9 +843,15 @@ export default function Home() {
           </Show>
         </section>
 
-        <aside classList={{ "control-panel": true, open: panelOpen() }}>
+        <aside
+          classList={{
+            "control-panel": true,
+            "settings-drawer": true,
+            open: panelOpen(),
+          }}
+        >
           <div class="mobile-panel-head">
-            <strong>Tune your desk</strong>
+            <strong>Settings</strong>
             <Button
               variant="ghost"
               size="icon"
@@ -647,7 +879,18 @@ export default function Home() {
                 <strong>Like</strong>
                 <div>
                   <For each={likedTopics()}>
-                    {(topic) => <Badge>{topic.topic}</Badge>}
+                    {(topic) => (
+                      <span class="editable-topic">
+                        <Badge>{topic.topic}</Badge>
+                        <button
+                          type="button"
+                          aria-label={`Remove ${topic.topic}`}
+                          onClick={() => removeTopic(topic.topic)}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    )}
                   </For>
                 </div>
               </div>
@@ -655,11 +898,43 @@ export default function Home() {
                 <strong>Dislike</strong>
                 <div>
                   <For each={dislikedTopics()}>
-                    {(topic) => <Badge>{topic.topic}</Badge>}
+                    {(topic) => (
+                      <span class="editable-topic">
+                        <Badge>{topic.topic}</Badge>
+                        <button
+                          type="button"
+                          aria-label={`Remove ${topic.topic}`}
+                          onClick={() => removeTopic(topic.topic)}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    )}
                   </For>
                 </div>
               </div>
             </details>
+            <form class="topic-form" onSubmit={addTopic}>
+              <input
+                required
+                maxlength="100"
+                placeholder="Add a topic"
+                value={topicName()}
+                onInput={(event) => setTopicName(event.currentTarget.value)}
+              />
+              <select
+                value={topicReaction()}
+                onChange={(event) =>
+                  setTopicReaction(event.currentTarget.value as Reaction)
+                }
+              >
+                <option value="like">Like</option>
+                <option value="dislike">Dislike</option>
+              </select>
+              <Button type="submit" variant="outline" size="sm">
+                <Plus size={14} /> Add
+              </Button>
+            </form>
             <p class="learning-note">
               <Sparkles size={13} />
               Topic ratings update these signals and are included in future
@@ -721,6 +996,132 @@ export default function Home() {
                 <Plus size={14} /> Add source
               </Button>
             </form>
+          </section>
+
+          <section class="panel-section">
+            <div class="panel-heading">
+              <span class="panel-icon"><Cog size={15} /></span>
+              <div>
+                <h2>Runtime and model</h2>
+                <p>Stored in the Newsbrew database.</p>
+              </div>
+            </div>
+            <form class="settings-form" onSubmit={saveSettings}>
+              <label>
+                Poll interval, minutes
+                <input
+                  required
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={pollInterval()}
+                  onInput={(event) =>
+                    setPollInterval(event.currentTarget.value)
+                  }
+                />
+              </label>
+              <label>
+                Items per source
+                <input
+                  required
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={maxItems()}
+                  onInput={(event) => setMaxItems(event.currentTarget.value)}
+                />
+              </label>
+              <label>
+                Responses API base URL
+                <input
+                  required
+                  type="url"
+                  value={llmBaseURL()}
+                  onInput={(event) => setLlmBaseURL(event.currentTarget.value)}
+                />
+              </label>
+              <label>
+                Model
+                <input
+                  required
+                  value={llmModel()}
+                  onInput={(event) => setLlmModel(event.currentTarget.value)}
+                />
+              </label>
+              <label>
+                API key
+                <input
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder={
+                    state()?.llm.hasApiKey
+                      ? "Stored — leave blank to keep"
+                      : "API key"
+                  }
+                  value={llmApiKey()}
+                  onInput={(event) => setLlmApiKey(event.currentTarget.value)}
+                />
+              </label>
+              <Button type="submit" variant="accent" class="w-full">
+                <Check size={14} /> Save settings
+              </Button>
+            </form>
+          </section>
+
+          <section class="panel-section auth-settings">
+            <div class="panel-heading">
+              <span class="panel-icon"><KeyRound size={15} /></span>
+              <div>
+                <h2>Access</h2>
+                <p>
+                  Leave blank for open access, or set one shared token.
+                </p>
+              </div>
+            </div>
+            <input
+              class="access-token-input"
+              type="text"
+              autocomplete="off"
+              spellcheck={false}
+              maxlength="512"
+              placeholder={
+                auth()?.required
+                  ? "Enter a replacement, or blank to disable"
+                  : "No access token"
+              }
+              value={accessTokenDraft()}
+              onInput={(event) =>
+                setAccessTokenDraft(event.currentTarget.value)
+              }
+            />
+            <div class="access-token-actions">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={authBusy()}
+                onClick={generateAccessToken}
+              >
+                Generate
+              </Button>
+              <Button
+                type="button"
+                variant="accent"
+                disabled={authBusy()}
+                onClick={saveAccessToken}
+              >
+                <Check size={14} /> Save access
+              </Button>
+            </div>
+            <Show when={auth()?.required}>
+              <Button
+                type="button"
+                variant="ghost"
+                class="w-full"
+                onClick={signOut}
+              >
+                <LogOut size={14} /> Sign out
+              </Button>
+            </Show>
           </section>
         </aside>
       </main>

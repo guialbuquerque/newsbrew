@@ -1,5 +1,6 @@
 import { config } from "./lib/config.ts";
 import { runIngestionSafely } from "./lib/ingest.ts";
+import { reloadRuntimeConfig } from "./lib/store.ts";
 
 let stopped = false;
 
@@ -19,6 +20,7 @@ console.log(
 );
 
 while (!stopped) {
+  reloadRuntimeConfig();
   try {
     const result = await runIngestionSafely();
     console.log(
@@ -27,5 +29,6 @@ while (!stopped) {
   } catch (error) {
     console.error(`${new Date().toISOString()}: ingestion failed`, error);
   }
+  reloadRuntimeConfig();
   await delay(config.pollIntervalMinutes * 60_000);
 }

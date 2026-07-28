@@ -96,5 +96,15 @@ export type DashboardState = AppState & {
   llm: {
     baseURL: string;
     model: string;
+    hasApiKey: boolean;
   };
+  runtime: {
+    pollIntervalMinutes: number;
+    maxItemsPerSource: number;
+  };
+};
+
+export type AuthStatus = {
+  required: boolean;
+  authenticated: boolean;
 };

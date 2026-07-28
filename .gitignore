@@ -13,3 +13,5 @@ classifier-run*.jsonl
 coverage/
 *.tsbuildinfo
 .cache/
+newsbrew.json
+newsbrew.dev.json

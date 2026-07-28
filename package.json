@@ -12,6 +12,8 @@
     "ingest": "node --experimental-strip-types src/ingest.ts",
     "tune:filter": "node --experimental-strip-types src/tune-filter.ts",
     "tune:analyser": "node --experimental-strip-types src/tune-analyser.ts",
+    "settings:export": "node --experimental-strip-types src/settings-export.ts",
+    "settings:import": "node --experimental-strip-types src/settings-import.ts",
     "worker": "node --experimental-strip-types src/worker.ts",
     "test": "node --experimental-strip-types --test src/lib/*.test.ts"
   },

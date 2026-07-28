@@ -1,5 +1,6 @@
 import type { APIEvent } from "@solidjs/start/server";
 import { z } from "zod";
+import { isAuthenticated, unauthorized } from "~/lib/auth";
 import { addSource, removeSource } from "~/lib/store";
 import { stableId } from "~/lib/utils";
 
@@ -9,6 +10,7 @@ const addSchema = z.object({
 });
 
 export async function POST({ request }: APIEvent) {
+  if (!isAuthenticated(request)) return unauthorized();
   const parsed = addSchema.safeParse(await request.json());
   if (!parsed.success) {
     return Response.json({ error: parsed.error.message }, { status: 400 });
@@ -23,6 +25,7 @@ export async function POST({ request }: APIEvent) {
 }
 
 export async function DELETE({ request }: APIEvent) {
+  if (!isAuthenticated(request)) return unauthorized();
   const id = new URL(request.url).searchParams.get("id");
   if (!id) return Response.json({ error: "Missing source id" }, { status: 400 });
   return Response.json(await removeSource(id));

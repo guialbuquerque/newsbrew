@@ -1,4 +1,5 @@
 import { defineHandler } from "nitro";
+import { isAuthenticated, unauthorized } from "../../../src/lib/auth.ts";
 import {
   getRefreshProgress,
   startRefresh,
@@ -6,6 +7,7 @@ import {
 } from "../../../src/lib/refresh.ts";
 
 export default defineHandler((event) => {
+  if (!isAuthenticated(event.req)) return unauthorized();
   if (event.method === "GET") {
     return Response.json(getRefreshProgress());
   }

@@ -1,0 +1,27 @@
+{
+  "databaseFile": "./data/news.sqlite",
+  "runtime": {
+    "pollIntervalMinutes": 30,
+    "maxItemsPerSource": 8
+  },
+  "llm": {
+    "baseURL": "http://127.0.0.1:1234/v1",
+    "model": "google/gemma-4-26b-a4b-qat",
+    "apiKey": "lm-studio"
+  },
+  "auth": {
+    "accessToken": ""
+  },
+  "topics": {
+    "like": ["AI", "developer tools", "UK news"],
+    "dislike": ["celebrity gossip", "sports results"]
+  },
+  "sources": [
+    {
+      "id": "bbc-news",
+      "name": "BBC News",
+      "url": "https://feeds.bbci.co.uk/news/rss.xml",
+      "enabled": true
+    }
+  ]
+}

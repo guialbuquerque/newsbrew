@@ -1,4 +1,5 @@
 import { defineWebSocketHandler } from "nitro";
+import { isAuthenticated } from "../../../src/lib/auth.ts";
 import {
   getRefreshProgress,
   subscribeToRefresh,
@@ -7,6 +8,11 @@ import {
 const subscriptions = new Map<string, () => void>();
 
 export default defineWebSocketHandler({
+  upgrade(request) {
+    if (!isAuthenticated(request)) {
+      throw new Response("Access token required", { status: 401 });
+    }
+  },
   open(peer) {
     peer.send(JSON.stringify(getRefreshProgress()));
     subscriptions.set(

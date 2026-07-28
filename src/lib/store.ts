@@ -1,7 +1,17 @@
 import { mkdirSync } from "node:fs";
+import {
+  createHash,
+  randomBytes,
+  scryptSync,
+  timingSafeEqual,
+} from "node:crypto";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { config } from "./config.ts";
+import {
+  applyRuntimeConfig,
+  config,
+  importedConfig,
+} from "./config.ts";
 import type {
   AppState,
   Article,
@@ -138,6 +148,30 @@ database.exec(`
     value TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS app_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    poll_interval_minutes REAL NOT NULL,
+    max_items_per_source INTEGER NOT NULL,
+    llm_base_url TEXT NOT NULL,
+    llm_model TEXT NOT NULL,
+    llm_api_key TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS auth_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    rp_name TEXT NOT NULL,
+    rp_id TEXT,
+    origin TEXT,
+    access_token_salt TEXT NOT NULL DEFAULT '',
+    access_token_hash TEXT NOT NULL DEFAULT ''
+  );
+
+  CREATE TABLE IF NOT EXISTS auth_sessions (
+    token_hash TEXT PRIMARY KEY,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS articles_discovered_at
     ON articles(discovered_at DESC);
   CREATE INDEX IF NOT EXISTS ratings_created_at
@@ -146,12 +180,31 @@ database.exec(`
     ON filter_results(filtered_at DESC);
 `);
 
+database.exec(`
+  DROP TABLE IF EXISTS passkeys;
+  DROP TABLE IF EXISTS auth_challenges;
+`);
+
 const articleColumns = database
   .prepare("PRAGMA table_info(articles)")
   .all() as Array<{ name: string }>;
 if (!articleColumns.some((column) => column.name === "rejected")) {
   database.exec(
     "ALTER TABLE articles ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0",
+  );
+}
+
+const authSettingColumns = database
+  .prepare("PRAGMA table_info(auth_settings)")
+  .all() as Array<{ name: string }>;
+if (!authSettingColumns.some((column) => column.name === "access_token_salt")) {
+  database.exec(
+    "ALTER TABLE auth_settings ADD COLUMN access_token_salt TEXT NOT NULL DEFAULT ''",
+  );
+}
+if (!authSettingColumns.some((column) => column.name === "access_token_hash")) {
+  database.exec(
+    "ALTER TABLE auth_settings ADD COLUMN access_token_hash TEXT NOT NULL DEFAULT ''",
   );
 }
 
@@ -252,11 +305,20 @@ function insertArticle(article: Article) {
 }
 
 function initializeData() {
+  const initialized = database
+    .prepare("SELECT 1 FROM app_meta WHERE key = 'initialDataSeeded'")
+    .get();
+  if (initialized) return;
   const row = database.prepare("SELECT COUNT(*) AS count FROM sources").get() as {
     count: number;
   };
   if (row.count > 0) {
-    seedTopicPreferences();
+    database
+      .prepare(`
+        INSERT OR IGNORE INTO app_meta (key, value)
+        VALUES ('initialDataSeeded', ?)
+      `)
+      .run(new Date().toISOString());
     return;
   }
 
@@ -284,6 +346,12 @@ function initializeData() {
     ];
     sources.forEach(insertSource);
     seedTopicPreferences();
+    database
+      .prepare(`
+        INSERT INTO app_meta (key, value)
+        VALUES ('initialDataSeeded', ?)
+      `)
+      .run(new Date().toISOString());
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");
@@ -292,6 +360,171 @@ function initializeData() {
 }
 
 initializeData();
+
+function sourceId(name: string, url: string) {
+  return createHash("sha256").update(`${name}:${url}`).digest("hex").slice(0, 24);
+}
+
+function initializeSettings() {
+  database
+    .prepare(`
+      INSERT OR IGNORE INTO app_settings (
+        id, poll_interval_minutes, max_items_per_source,
+        llm_base_url, llm_model, llm_api_key
+      ) VALUES (1, ?, ?, ?, ?, ?)
+    `)
+    .run(
+      config.pollIntervalMinutes,
+      config.maxItemsPerSource,
+      config.lmStudioBaseURL,
+      config.lmStudioModel,
+      config.lmStudioApiKey,
+    );
+  database
+    .prepare(`
+      INSERT OR IGNORE INTO auth_settings (
+        id, rp_name, rp_id, origin, access_token_salt, access_token_hash
+      )
+      VALUES (1, 'Newsbrew', NULL, NULL, '', '')
+    `)
+    .run();
+}
+
+export function importConfiguredSettings(force = false) {
+  const next = importedConfig.value;
+  const fingerprint = importedConfig.fingerprint;
+  if (!next || !fingerprint) {
+    return { imported: false, source: importedConfig.source };
+  }
+  const previous = database
+    .prepare("SELECT value FROM app_meta WHERE key = 'configImportFingerprint'")
+    .get() as { value?: string } | undefined;
+  if (!force && previous?.value === fingerprint) {
+    return { imported: false, source: importedConfig.source };
+  }
+
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    if (next.runtime || next.llm) {
+      const current = database
+        .prepare(`
+          SELECT poll_interval_minutes AS pollIntervalMinutes,
+            max_items_per_source AS maxItemsPerSource,
+            llm_base_url AS llmBaseURL, llm_model AS llmModel,
+            llm_api_key AS llmApiKey
+          FROM app_settings WHERE id = 1
+        `)
+        .get() as {
+        pollIntervalMinutes: number;
+        maxItemsPerSource: number;
+        llmBaseURL: string;
+        llmModel: string;
+        llmApiKey: string;
+      };
+      database
+        .prepare(`
+          UPDATE app_settings SET
+            poll_interval_minutes = ?,
+            max_items_per_source = ?,
+            llm_base_url = ?,
+            llm_model = ?,
+            llm_api_key = ?
+          WHERE id = 1
+        `)
+        .run(
+          next.runtime?.pollIntervalMinutes ?? current.pollIntervalMinutes,
+          next.runtime?.maxItemsPerSource ?? current.maxItemsPerSource,
+          next.llm?.baseURL ?? current.llmBaseURL,
+          next.llm?.model ?? current.llmModel,
+          next.llm?.apiKey ?? current.llmApiKey,
+        );
+    }
+
+    if (next.auth) {
+      setAccessToken(next.auth.accessToken ?? "");
+    }
+
+    if (next.sources) {
+      database.prepare("UPDATE sources SET enabled = 0").run();
+      const upsert = database.prepare(`
+        INSERT INTO sources (id, name, url, enabled)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          url = excluded.url,
+          enabled = excluded.enabled
+      `);
+      for (const source of next.sources) {
+        upsert.run(
+          source.id ?? sourceId(source.name, source.url),
+          source.name,
+          source.url,
+          source.enabled ? 1 : 0,
+        );
+      }
+    }
+
+    if (next.topics) {
+      database.prepare("DELETE FROM topic_preferences").run();
+      const insert = database.prepare(`
+        INSERT INTO topic_preferences
+          (topic_key, topic, reaction, source, updated_at)
+        VALUES (?, ?, ?, 'rating', ?)
+      `);
+      const now = new Date().toISOString();
+      for (const topic of next.topics.like) {
+        insert.run(topicKey(topic), topic.trim(), "like", now);
+      }
+      for (const topic of next.topics.dislike) {
+        insert.run(topicKey(topic), topic.trim(), "dislike", now);
+      }
+    }
+
+    database
+      .prepare(`
+        INSERT INTO app_meta (key, value)
+        VALUES ('configImportFingerprint', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `)
+      .run(fingerprint);
+    database.exec("COMMIT");
+    return { imported: true, source: importedConfig.source };
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function hydrateRuntimeConfig() {
+  const settings = database
+    .prepare(`
+      SELECT poll_interval_minutes AS pollIntervalMinutes,
+        max_items_per_source AS maxItemsPerSource,
+        llm_base_url AS lmStudioBaseURL,
+        llm_model AS lmStudioModel,
+        llm_api_key AS lmStudioApiKey
+      FROM app_settings WHERE id = 1
+    `)
+    .get() as {
+    pollIntervalMinutes: number;
+    maxItemsPerSource: number;
+    lmStudioBaseURL: string;
+    lmStudioModel: string;
+    lmStudioApiKey: string;
+  };
+  applyRuntimeConfig(settings);
+}
+
+export function reloadRuntimeConfig() {
+  hydrateRuntimeConfig();
+  return readSettings();
+}
+
+initializeSettings();
+if (process.env.NEWSBREW_SETTINGS_IMPORT_MODE !== "explicit") {
+  importConfiguredSettings();
+}
+hydrateRuntimeConfig();
 
 export async function readState(): Promise<AppState> {
   const sources = database
@@ -408,6 +641,158 @@ export async function addSource(source: Source) {
 export async function removeSource(id: string) {
   database.prepare("DELETE FROM sources WHERE id = ?").run(id);
   return readState();
+}
+
+export async function addTopicPreference(
+  topic: string,
+  reaction: Reaction,
+) {
+  const normalized = topic.trim();
+  database
+    .prepare(`
+      INSERT INTO topic_preferences
+        (topic_key, topic, reaction, source, updated_at)
+      VALUES (?, ?, ?, 'rating', ?)
+      ON CONFLICT(topic_key) DO UPDATE SET
+        topic = excluded.topic,
+        reaction = excluded.reaction,
+        source = excluded.source,
+        updated_at = excluded.updated_at
+    `)
+    .run(topicKey(normalized), normalized, reaction, new Date().toISOString());
+  return readState();
+}
+
+export async function removeTopicPreference(topic: string) {
+  database
+    .prepare("DELETE FROM topic_preferences WHERE topic_key = ?")
+    .run(topicKey(topic));
+  return readState();
+}
+
+export function readSettings() {
+  const settings = database
+    .prepare(`
+      SELECT poll_interval_minutes AS pollIntervalMinutes,
+        max_items_per_source AS maxItemsPerSource,
+        llm_base_url AS baseURL, llm_model AS model,
+        length(llm_api_key) > 0 AS hasApiKey
+      FROM app_settings WHERE id = 1
+    `)
+    .get() as {
+    pollIntervalMinutes: number;
+    maxItemsPerSource: number;
+    baseURL: string;
+    model: string;
+    hasApiKey: number;
+  };
+  return {
+    runtime: {
+      pollIntervalMinutes: settings.pollIntervalMinutes,
+      maxItemsPerSource: settings.maxItemsPerSource,
+    },
+    llm: {
+      baseURL: settings.baseURL,
+      model: settings.model,
+      hasApiKey: Boolean(settings.hasApiKey),
+    },
+  };
+}
+
+export function readSettingsSnapshot() {
+  const settings = database
+    .prepare(`
+      SELECT poll_interval_minutes AS pollIntervalMinutes,
+        max_items_per_source AS maxItemsPerSource,
+        llm_base_url AS baseURL, llm_model AS model,
+        llm_api_key AS apiKey
+      FROM app_settings WHERE id = 1
+    `)
+    .get() as {
+    pollIntervalMinutes: number;
+    maxItemsPerSource: number;
+    baseURL: string;
+    model: string;
+    apiKey: string;
+  };
+  const sources = (
+    database
+      .prepare(`
+        SELECT id, name, url, enabled
+        FROM sources ORDER BY rowid
+      `)
+      .all() as Array<{
+      id: string;
+      name: string;
+      url: string;
+      enabled: number;
+    }>
+  ).map((source) => ({
+    id: source.id,
+    name: source.name,
+    url: source.url,
+    enabled: Boolean(source.enabled),
+  }));
+  const preferences = database
+    .prepare(`
+      SELECT topic, reaction
+      FROM topic_preferences
+      ORDER BY topic COLLATE NOCASE
+    `)
+    .all() as Array<{ topic: string; reaction: Reaction }>;
+  return {
+    runtime: {
+      pollIntervalMinutes: settings.pollIntervalMinutes,
+      maxItemsPerSource: settings.maxItemsPerSource,
+    },
+    llm: {
+      baseURL: settings.baseURL,
+      model: settings.model,
+      apiKey: settings.apiKey,
+    },
+    sources,
+    topics: {
+      like: preferences
+        .filter((preference) => preference.reaction === "like")
+        .map((preference) => preference.topic),
+      dislike: preferences
+        .filter((preference) => preference.reaction === "dislike")
+        .map((preference) => preference.topic),
+    },
+    accessTokenRequired: accessTokenRequired(),
+  };
+}
+
+export function updateSettings(next: {
+  pollIntervalMinutes: number;
+  maxItemsPerSource: number;
+  llmBaseURL: string;
+  llmModel: string;
+  llmApiKey?: string;
+}) {
+  const current = database
+    .prepare("SELECT llm_api_key AS apiKey FROM app_settings WHERE id = 1")
+    .get() as { apiKey: string };
+  const apiKey = next.llmApiKey === undefined ? current.apiKey : next.llmApiKey;
+  database
+    .prepare(`
+      UPDATE app_settings SET
+        poll_interval_minutes = ?,
+        max_items_per_source = ?,
+        llm_base_url = ?,
+        llm_model = ?,
+        llm_api_key = ?
+      WHERE id = 1
+    `)
+    .run(
+      next.pollIntervalMinutes,
+      next.maxItemsPerSource,
+      next.llmBaseURL,
+      next.llmModel,
+      apiKey,
+    );
+  hydrateRuntimeConfig();
+  return readSettings();
 }
 
 export async function recordTopicRatings(
@@ -580,6 +965,92 @@ export async function mergeArticles(articles: Article[]) {
     database.exec("ROLLBACK");
     throw error;
   }
+}
+
+function accessTokenDigest(token: string, salt: string) {
+  return scryptSync(token, salt, 32);
+}
+
+export function accessTokenRequired() {
+  const row = database
+    .prepare(`
+      SELECT access_token_hash AS tokenHash
+      FROM auth_settings WHERE id = 1
+    `)
+    .get() as { tokenHash: string };
+  return row.tokenHash.length > 0;
+}
+
+export function verifyAccessToken(token: string) {
+  const row = database
+    .prepare(`
+      SELECT access_token_salt AS salt, access_token_hash AS tokenHash
+      FROM auth_settings WHERE id = 1
+    `)
+    .get() as { salt: string; tokenHash: string };
+  if (!row.salt || !row.tokenHash) return false;
+  const expected = Buffer.from(row.tokenHash, "hex");
+  const actual = accessTokenDigest(token.trim(), row.salt);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+export function setAccessToken(token: string) {
+  const normalized = token.trim();
+  if (!normalized) {
+    database
+      .prepare(`
+        UPDATE auth_settings
+        SET access_token_salt = '', access_token_hash = ''
+        WHERE id = 1
+      `)
+      .run();
+  } else {
+    const salt = randomBytes(16).toString("hex");
+    const tokenHash = accessTokenDigest(normalized, salt).toString("hex");
+    database
+      .prepare(`
+        UPDATE auth_settings
+        SET access_token_salt = ?, access_token_hash = ?
+        WHERE id = 1
+      `)
+      .run(salt, tokenHash);
+  }
+  database.prepare("DELETE FROM auth_sessions").run();
+  return accessTokenRequired();
+}
+
+function sessionHash(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+export function createAuthSession() {
+  const token = randomBytes(32).toString("base64url");
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
+  database
+    .prepare(`
+      INSERT INTO auth_sessions (token_hash, expires_at, created_at)
+      VALUES (?, ?, ?)
+    `)
+    .run(sessionHash(token), expiresAt.toISOString(), now.toISOString());
+  return { token, expiresAt };
+}
+
+export function authSessionIsValid(token: string | undefined) {
+  if (!token) return false;
+  const row = database
+    .prepare(`
+      SELECT expires_at AS expiresAt FROM auth_sessions WHERE token_hash = ?
+    `)
+    .get(sessionHash(token)) as { expiresAt: string } | undefined;
+  return Boolean(row && row.expiresAt > new Date().toISOString());
+}
+
+export function deleteAuthSession(token: string | undefined) {
+  if (!token) return;
+  database
+    .prepare("DELETE FROM auth_sessions WHERE token_hash = ?")
+    .run(sessionHash(token));
 }
 
 export async function commitIngestionRun(input: {

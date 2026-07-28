@@ -1,5 +1,6 @@
 import type { APIEvent } from "@solidjs/start/server";
 import { z } from "zod";
+import { isAuthenticated, unauthorized } from "~/lib/auth";
 import { recordTopicRatings } from "~/lib/store";
 
 const schema = z.object({
@@ -15,6 +16,7 @@ const schema = z.object({
 });
 
 export async function POST({ request }: APIEvent) {
+  if (!isAuthenticated(request)) return unauthorized();
   const parsed = schema.safeParse(await request.json());
   if (!parsed.success) {
     return Response.json({ error: parsed.error.message }, { status: 400 });
