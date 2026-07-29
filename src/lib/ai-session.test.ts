@@ -4,11 +4,16 @@ import {
   readResponseMetadata,
   ResponseMetadataTracker,
 } from "./ai/response-metadata.ts";
-import { modelListURL, parseModelContext } from "./ai/model-context.ts";
+import {
+  ensureModelContext,
+  modelListURL,
+  modelLoadURL,
+  parseModelContext,
+} from "./ai/model-context.ts";
 import { filterSystemPrompt } from "./ai/prompts.ts";
 import { parseFilterDecision } from "./ai.ts";
 
-test("filter prompt contains topic signals and requires a binary answer", () => {
+test("filter prompt contains topic signals, preference contrasts, and tri-state labels", () => {
   const prompt = filterSystemPrompt([
     { topic: "infrastructure", reaction: "like", source: "rating" },
     { topic: "celebrity gossip", reaction: "dislike", source: "perplexity" },
@@ -16,16 +21,25 @@ test("filter prompt contains topic signals and requires a binary answer", () => 
 
   assert.match(prompt, /Positive topics:\n- infrastructure/);
   assert.match(prompt, /Negative topics:\n- celebrity gossip/);
-  assert.match(prompt, /exactly YES or NO/);
+  assert.match(prompt, /Apply these preference contrasts:/);
+  assert.match(prompt, /Judge the central treatment, not keyword presence/);
+  assert.match(prompt, /YES = clearly wanted/);
+  assert.match(prompt, /NO = explicit rejection/);
+  assert.match(prompt, /MAYBE = neutral, ambiguous/);
   assert.doesNotMatch(prompt, /score|rubric|recent feedback/i);
 });
 
-test("accepts filter answers that start with yes or no", () => {
-  assert.equal(parseFilterDecision("YES\nYES"), true);
-  assert.equal(parseFilterDecision("  no\nNO"), false);
+test("accepts only exact tri-state filter answers", () => {
+  assert.equal(parseFilterDecision(" YES \n"), "yes");
+  assert.equal(parseFilterDecision("no"), "no");
+  assert.equal(parseFilterDecision("MAYBE"), "maybe");
   assert.throws(
     () => parseFilterDecision("The answer is YES"),
-    /did not start its answer/,
+    /did not answer with exactly/,
+  );
+  assert.throws(
+    () => parseFilterDecision("YES\nYES"),
+    /did not answer with exactly/,
   );
 });
 
@@ -108,4 +122,78 @@ test("reads the active and absolute model context limits", () => {
     modelListURL("http://127.0.0.1:1234/v1").href,
     "http://127.0.0.1:1234/api/v1/models",
   );
+  assert.equal(
+    modelLoadURL("http://127.0.0.1:1234/v1").href,
+    "http://127.0.0.1:1234/api/v1/models/load",
+  );
+});
+
+test("loads the configured local model when it is not already resident", async () => {
+  let loaded = false;
+  const requests: Array<{ url: string; method: string; body?: unknown }> = [];
+  const mockFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    requests.push({
+      url,
+      method,
+      ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}),
+    });
+    if (url.endsWith("/models/load")) {
+      loaded = true;
+      return Response.json({
+        type: "llm",
+        instance_id: "example/model",
+        status: "loaded",
+      });
+    }
+    return Response.json({
+      models: [
+        {
+          key: "example/model",
+          max_context_length: 128_000,
+          loaded_instances: loaded
+            ? [
+                {
+                  id: "example/model",
+                  config: { context_length: 128_000 },
+                },
+              ]
+            : [],
+        },
+      ],
+    });
+  };
+
+  assert.deepEqual(
+    await ensureModelContext({
+      baseURL: "http://127.0.0.1:1234/v1",
+      model: "example/model",
+      apiKey: "local",
+      fetch: mockFetch,
+    }),
+    {
+      model: "example/model",
+      activeContextTokens: 128_000,
+      maximumContextTokens: 128_000,
+    },
+  );
+  assert.deepEqual(requests, [
+    {
+      url: "http://127.0.0.1:1234/api/v1/models",
+      method: "GET",
+    },
+    {
+      url: "http://127.0.0.1:1234/api/v1/models/load",
+      method: "POST",
+      body: {
+        model: "example/model",
+        echo_load_config: true,
+      },
+    },
+    {
+      url: "http://127.0.0.1:1234/api/v1/models",
+      method: "GET",
+    },
+  ]);
 });

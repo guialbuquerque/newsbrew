@@ -61,13 +61,13 @@ function progressMessage(progress: RefreshProgress) {
     return `${progress.sources.completed}/${progress.sources.total} sources downloaded`;
   }
   if (progress.phase === "filtering") {
-    return `${progress.filters.completed}/${progress.filters.total} articles filtered · ${progress.filters.accepted} accepted`;
+    return `${progress.filters.completed}/${progress.filters.total} articles filtered · ${progress.filters.accepted} accepted · ${progress.filters.maybe} maybe`;
   }
   if (progress.phase === "analysing") {
-    return `${progress.analyses.completed}/${progress.analyses.total} articles analysed · ${progress.analyses.stored} added · ${progress.analyses.rejected} rejected`;
+    return `${progress.analyses.completed}/${progress.analyses.total} articles analysed · ${progress.analyses.stored} added · ${progress.analyses.skipped} skipped`;
   }
   if (progress.phase === "completed") {
-    return `Refresh complete · ${progress.analyses.stored} added · ${progress.analyses.rejected} rejected`;
+    return `Refresh complete · ${progress.analyses.stored} added · ${progress.analyses.skipped} skipped`;
   }
   if (progress.phase === "failed") {
     return progress.error
@@ -771,13 +771,22 @@ export default function Home() {
                         </Card>
                       }
                     >
-                      <Card class="article-card">
+                      <Card
+                        class={
+                          article.filterDecision === "maybe"
+                            ? "article-card maybe-article"
+                            : "article-card"
+                        }
+                      >
                         <ArticleImage article={article} />
                         <div class="article-body">
                           <div class="article-meta">
                             <span>{article.sourceName}</span>
                             <span class="meta-separator">•</span>
                             <span>{formatWhen(article.publishedAt ?? article.discoveredAt)}</span>
+                            <Show when={article.filterDecision === "maybe"}>
+                              <span class="maybe-label">Maybe</span>
+                            </Show>
                           </div>
                           <h2 class="article-headline">{article.headline}</h2>
                           <p class="byline">{article.byline}</p>

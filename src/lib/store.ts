@@ -100,7 +100,10 @@ database.exec(`
     image_url TEXT NOT NULL,
     image_alt TEXT NOT NULL,
     image_kind TEXT NOT NULL CHECK (image_kind IN ('article', 'related')),
+    filter_decision TEXT NOT NULL DEFAULT 'yes'
+      CHECK (filter_decision IN ('yes', 'no', 'maybe')),
     hidden INTEGER NOT NULL DEFAULT 0,
+    skip_reason TEXT,
     rejected INTEGER NOT NULL DEFAULT 0
   );
 
@@ -140,6 +143,8 @@ database.exec(`
     headline TEXT NOT NULL,
     published_at TEXT,
     included INTEGER NOT NULL CHECK (included IN (0, 1)),
+    decision TEXT NOT NULL
+      CHECK (decision IN ('yes', 'no', 'maybe')),
     filtered_at TEXT NOT NULL
   );
 
@@ -192,6 +197,34 @@ if (!articleColumns.some((column) => column.name === "rejected")) {
   database.exec(
     "ALTER TABLE articles ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0",
   );
+}
+if (!articleColumns.some((column) => column.name === "filter_decision")) {
+  database.exec(
+    `ALTER TABLE articles ADD COLUMN filter_decision TEXT NOT NULL DEFAULT 'yes'
+      CHECK (filter_decision IN ('yes', 'no', 'maybe'))`,
+  );
+}
+if (!articleColumns.some((column) => column.name === "skip_reason")) {
+  database.exec("ALTER TABLE articles ADD COLUMN skip_reason TEXT");
+  database.exec(`
+    UPDATE articles
+    SET skip_reason = 'legacy_rejected'
+    WHERE rejected = 1
+  `);
+}
+
+const filterResultColumns = database
+  .prepare("PRAGMA table_info(filter_results)")
+  .all() as Array<{ name: string }>;
+if (!filterResultColumns.some((column) => column.name === "decision")) {
+  database.exec(
+    `ALTER TABLE filter_results ADD COLUMN decision TEXT NOT NULL DEFAULT 'no'
+      CHECK (decision IN ('yes', 'no', 'maybe'))`,
+  );
+  database.exec(`
+    UPDATE filter_results
+    SET decision = CASE included WHEN 1 THEN 'yes' ELSE 'no' END
+  `);
 }
 
 const authSettingColumns = database
@@ -259,8 +292,8 @@ function insertArticle(article: Article) {
       INSERT INTO articles (
         id, source_id, source_name, url, headline, byline, published_at,
         discovered_at, summary, points_markdown, image_url, image_alt,
-        image_kind, hidden, rejected
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        image_kind, filter_decision, hidden, skip_reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         source_name = excluded.source_name,
         url = excluded.url,
@@ -272,7 +305,8 @@ function insertArticle(article: Article) {
         image_url = excluded.image_url,
         image_alt = excluded.image_alt,
         image_kind = excluded.image_kind,
-        rejected = excluded.rejected
+        filter_decision = excluded.filter_decision,
+        skip_reason = excluded.skip_reason
     `)
     .run(
       article.id,
@@ -288,8 +322,9 @@ function insertArticle(article: Article) {
       article.imageUrl,
       article.imageAlt,
       article.imageKind,
+      article.filterDecision,
       article.hidden ? 1 : 0,
-      article.rejected ? 1 : 0,
+      article.skipReason ?? null,
     );
 
   database
@@ -546,15 +581,15 @@ export async function readState(): Promise<AppState> {
         discovered_at AS discoveredAt, summary,
         points_markdown AS pointsMarkdown,
         image_url AS imageUrl, image_alt AS imageAlt,
-        image_kind AS imageKind, hidden, rejected
+        image_kind AS imageKind, filter_decision AS filterDecision,
+        hidden, skip_reason AS skipReason
       FROM articles
-      WHERE rejected = 0
+      WHERE skip_reason IS NULL
       ORDER BY discovered_at DESC LIMIT 250
     `)
     .all() as Array<
-    Omit<Article, "topics" | "topicRatings" | "hidden" | "rejected"> & {
+    Omit<Article, "topics" | "topicRatings" | "hidden"> & {
       hidden: number;
-      rejected: number;
     }
   >;
 
@@ -589,7 +624,7 @@ export async function readState(): Promise<AppState> {
   const articles: Article[] = articleRows.map((row) => ({
     ...row,
     hidden: Boolean(row.hidden),
-    rejected: Boolean(row.rejected),
+    skipReason: row.skipReason ?? undefined,
     topics: topicsByArticle.get(row.id) ?? [],
     topicRatings: ratingsByArticle.get(row.id) ?? [],
   }));
@@ -609,11 +644,11 @@ export async function readState(): Promise<AppState> {
     `)
     .all()
     .map((row) => String((row as { articleId: string }).articleId));
-  const rejectedArticleIds = database
-    .prepare("SELECT id FROM articles WHERE rejected = 1")
+  const skippedArticleIds = database
+    .prepare("SELECT id FROM articles WHERE skip_reason IS NOT NULL")
     .all()
     .map((row) => String((row as { id: string }).id));
-  const seen = [...new Set([...recentSeen, ...rejectedArticleIds])];
+  const seen = [...new Set([...recentSeen, ...skippedArticleIds])];
 
   const metadata = Object.fromEntries(
     (
@@ -883,14 +918,15 @@ export async function recordFilterResult(result: FilterResult) {
   database
     .prepare(`
       INSERT INTO filter_results
-        (url, headline, published_at, included, filtered_at)
-      VALUES (?, ?, ?, ?, ?)
+        (url, headline, published_at, included, decision, filtered_at)
+      VALUES (?, ?, ?, ?, ?, ?)
     `)
     .run(
       result.url,
       result.headline,
       result.publishedAt ?? null,
-      result.included ? 1 : 0,
+      result.decision === "no" ? 0 : 1,
+      result.decision,
       result.filteredAt,
     );
 }
@@ -908,14 +944,11 @@ export async function readFilterResults(): Promise<FilterResult[]> {
     database
       .prepare(`
         SELECT id, url, headline, published_at AS publishedAt,
-          included, filtered_at AS filteredAt
+          decision, filtered_at AS filteredAt
         FROM filter_results ORDER BY id
       `)
-      .all() as Array<Omit<FilterResult, "included"> & { included: number }>
-  ).map((result) => ({
-    ...result,
-    included: Boolean(result.included),
-  }));
+      .all() as FilterResult[]
+  );
 }
 
 export async function updateSourceStatus(source: Source) {
@@ -946,17 +979,17 @@ export async function mergeArticles(articles: Article[]) {
     for (const article of articles) insertArticle(article);
     database.exec(`
       DELETE FROM articles
-      WHERE rejected = 0 AND id NOT IN (
+      WHERE skip_reason IS NULL AND id NOT IN (
         SELECT id FROM articles
-        WHERE rejected = 0
+        WHERE skip_reason IS NULL
         ORDER BY discovered_at DESC LIMIT 250
       )
     `);
     database.exec(`
       DELETE FROM articles
-      WHERE rejected = 1 AND id NOT IN (
+      WHERE skip_reason IS NOT NULL AND id NOT IN (
         SELECT id FROM articles
-        WHERE rejected = 1
+        WHERE skip_reason IS NOT NULL
         ORDER BY discovered_at DESC LIMIT 250
       )
     `);
@@ -1060,8 +1093,8 @@ export async function commitIngestionRun(input: {
 }) {
   const insertFilterResult = database.prepare(`
     INSERT INTO filter_results
-      (url, headline, published_at, included, filtered_at)
-    VALUES (?, ?, ?, ?, ?)
+      (url, headline, published_at, included, decision, filtered_at)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
   const insertSeen = database.prepare(`
     INSERT OR IGNORE INTO seen_articles (article_id, seen_at) VALUES (?, ?)
@@ -1075,7 +1108,8 @@ export async function commitIngestionRun(input: {
         result.url,
         result.headline,
         result.publishedAt ?? null,
-        result.included ? 1 : 0,
+        result.decision === "no" ? 0 : 1,
+        result.decision,
         result.filteredAt,
       );
     }
@@ -1091,17 +1125,17 @@ export async function commitIngestionRun(input: {
     `);
     database.exec(`
       DELETE FROM articles
-      WHERE rejected = 0 AND id NOT IN (
+      WHERE skip_reason IS NULL AND id NOT IN (
         SELECT id FROM articles
-        WHERE rejected = 0
+        WHERE skip_reason IS NULL
         ORDER BY discovered_at DESC LIMIT 250
       )
     `);
     database.exec(`
       DELETE FROM articles
-      WHERE rejected = 1 AND id NOT IN (
+      WHERE skip_reason IS NOT NULL AND id NOT IN (
         SELECT id FROM articles
-        WHERE rejected = 1
+        WHERE skip_reason IS NOT NULL
         ORDER BY discovered_at DESC LIMIT 250
       )
     `);

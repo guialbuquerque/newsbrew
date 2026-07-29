@@ -2,7 +2,7 @@ import { chat } from "@tanstack/ai";
 import { openaiCompatible } from "@tanstack/ai-openai/compatible";
 import type { ZodType } from "zod";
 import { config } from "../config.ts";
-import { fetchModelContext } from "./model-context.ts";
+import { ensureModelContext } from "./model-context.ts";
 import {
   ResponseMetadataTracker,
   type ResponseMetadata,
@@ -12,6 +12,8 @@ type TurnOptions = {
   system: string;
   prompt: string;
   previousResponseId?: string;
+  reasoningEffort?: "none";
+  maxOutputTokens?: number;
 };
 
 export type TurnResult<T> = {
@@ -22,9 +24,11 @@ export type TurnResult<T> = {
   totalTokens?: number;
 };
 
-export function createResponsesClient(abortController?: AbortController) {
+export function createResponsesClient(
+  abortController?: AbortController,
+) {
   const tracker = new ResponseMetadataTracker();
-  const context = fetchModelContext({
+  const context = ensureModelContext({
     baseURL: config.lmStudioBaseURL,
     model: config.lmStudioModel,
     apiKey: config.lmStudioApiKey,
@@ -46,6 +50,12 @@ export function createResponsesClient(abortController?: AbortController) {
       temperature: 0.1,
       store: true,
       truncation: "disabled" as const,
+      ...(options.maxOutputTokens
+        ? { max_output_tokens: options.maxOutputTokens }
+        : {}),
+      ...(options.reasoningEffort
+        ? { reasoning: { effort: options.reasoningEffort } }
+        : {}),
       ...(options.previousResponseId
         ? { previous_response_id: options.previousResponseId }
         : {}),

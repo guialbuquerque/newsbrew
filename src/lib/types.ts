@@ -1,5 +1,12 @@
 export type Reaction = "like" | "dislike";
 export type ImageKind = "article" | "related";
+export type FilterDecision = "yes" | "no" | "maybe";
+export type ArticleSkipReason =
+  | "unusable_article"
+  | "headline_mismatch"
+  | "insufficient_content"
+  | "summary_timeout"
+  | "legacy_rejected";
 
 export type TopicRating = {
   topic: string;
@@ -34,9 +41,10 @@ export type Article = {
   imageUrl: string;
   imageAlt: string;
   imageKind: ImageKind;
+  filterDecision: FilterDecision;
   topicRatings: TopicRating[];
   hidden: boolean;
-  rejected: boolean;
+  skipReason?: ArticleSkipReason;
 };
 
 export type FilterResult = {
@@ -44,7 +52,7 @@ export type FilterResult = {
   url: string;
   headline: string;
   publishedAt?: string;
-  included: boolean;
+  decision: FilterDecision;
   filteredAt: string;
 };
 
@@ -71,13 +79,14 @@ export type RefreshProgress = {
     completed: number;
     total: number;
     accepted: number;
+    maybe: number;
     failed: number;
   };
   analyses: {
     completed: number;
     total: number;
     stored: number;
-    rejected: number;
+    skipped: number;
     failed: number;
   };
   error?: string;

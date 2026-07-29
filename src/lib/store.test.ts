@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { Article } from "./types.ts";
 
-test("stores ratings, rejected articles, and retained filter decisions", async () => {
+test("stores ratings, skipped articles, and retained filter decisions", async () => {
   const directory = mkdtempSync(join(tmpdir(), "signal-desk-store-"));
   process.env.NEWSBREW_CONFIG_JSON = JSON.stringify({
     databaseFile: join(directory, "news.sqlite"),
@@ -42,17 +42,19 @@ test("stores ratings, rejected articles, and retained filter decisions", async (
       imageUrl: "https://example.com/tunnel.jpg",
       imageAlt: "Tunnel",
       imageKind: "article",
+      filterDecision: "yes",
       topicRatings: [],
       hidden: false,
-      rejected: false,
     };
 
     await store.mergeArticles([article]);
+    let state = await store.readState();
+    assert.equal(state.articles[0]?.filterDecision, "yes");
     await store.recordTopicRatings(article.id, [
       { topic: "finance", reaction: "dislike" },
       { topic: "venture capital", reaction: "dislike" },
     ]);
-    let state = await store.readState();
+    state = await store.readState();
     assert.equal(state.articles[0]?.hidden, true);
     assert.equal(state.articles[0]?.topicRatings.length, 2);
 
@@ -71,31 +73,31 @@ test("stores ratings, rejected articles, and retained filter decisions", async (
     await store.mergeArticles([
       {
         ...article,
-        id: "rejected-story",
-        url: "https://example.com/rejected",
-        rejected: true,
+        id: "skipped-story",
+        url: "https://example.com/skipped",
+        skipReason: "summary_timeout",
       },
     ]);
     state = await store.readState();
     assert.equal(
-      state.articles.some((item) => item.id === "rejected-story"),
+      state.articles.some((item) => item.id === "skipped-story"),
       false,
     );
-    assert.equal(state.seen.includes("rejected-story"), true);
+    assert.equal(state.seen.includes("skipped-story"), true);
 
     const now = new Date("2026-07-27T12:00:00.000Z");
     await store.recordFilterResult({
       url: "https://example.com/old",
       headline: "Old result",
       publishedAt: "2026-04-01T00:00:00.000Z",
-      included: false,
+      decision: "no",
       filteredAt: "2026-05-01T00:00:00.000Z",
     });
     await store.recordFilterResult({
       url: "https://example.com/current",
       headline: "Current result",
       publishedAt: "2026-07-27T00:00:00.000Z",
-      included: true,
+      decision: "maybe",
       filteredAt: now.toISOString(),
     });
 
@@ -103,9 +105,9 @@ test("stores ratings, rejected articles, and retained filter decisions", async (
     assert.deepEqual(
       (await store.readFilterResults()).map((result) => ({
         headline: result.headline,
-        included: result.included,
+        decision: result.decision,
       })),
-      [{ headline: "Current result", included: true }],
+      [{ headline: "Current result", decision: "maybe" }],
     );
 
     await assert.rejects(
@@ -114,7 +116,7 @@ test("stores ratings, rejected articles, and retained filter decisions", async (
           {
             url: "https://example.com/rolled-back",
             headline: "Rolled back result",
-            included: true,
+            decision: "yes",
             filteredAt: now.toISOString(),
           },
         ],

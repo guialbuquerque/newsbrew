@@ -80,7 +80,7 @@ for (const source of sources) {
 
     const started = performance.now();
     try {
-      const included = await filter.decide({
+      const decision = await filter.decide({
         headline: item.headline,
         byline: item.byline,
         sourceName: source.name,
@@ -90,7 +90,7 @@ for (const source of sources) {
         type: "judgement",
         ...candidate,
         durationMs: Math.round(performance.now() - started),
-        result: included ? "YES" : "NO",
+        result: decision.toUpperCase(),
         context: filter.lastTurn(),
       });
     } catch (error) {

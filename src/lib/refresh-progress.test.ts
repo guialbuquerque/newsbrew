@@ -21,13 +21,14 @@ function progress(
       completed: phase === "filtering" ? completed : 0,
       total: phase === "filtering" ? total : 0,
       accepted: 0,
+      maybe: 0,
       failed: 0,
     },
     analyses: {
       completed: phase === "analysing" ? completed : 0,
       total: phase === "analysing" ? total : 0,
       stored: 0,
-      rejected: 0,
+      skipped: 0,
       failed: 0,
     },
   };

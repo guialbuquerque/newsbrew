@@ -6,13 +6,23 @@ import {
 import { createResponsesClient } from "./ai/responses.ts";
 import type { TurnResult } from "./ai/responses.ts";
 import type { ModelContext } from "./ai/model-context.ts";
-import type { TopicPreference } from "./types.ts";
+import type {
+  ArticleSkipReason,
+  FilterDecision,
+  TopicPreference,
+} from "./types.ts";
 
 const articleBasicsSchema = z.object({
-  rejected: z.boolean(),
+  skipReason: z
+    .enum([
+      "unusable_article",
+      "headline_mismatch",
+      "insufficient_content",
+    ])
+    .nullable(),
   headline: z.string().min(1),
-  summary: z.string().min(20),
-  tags: z.array(z.string().min(1)).min(1).max(10),
+  summary: z.string().min(1),
+  tags: z.array(z.string().min(1)).max(10),
 });
 
 export type ArticleBasics = z.infer<typeof articleBasicsSchema>;
@@ -54,22 +64,34 @@ export class ModelResponseError extends Error {
   }
 }
 
-export function parseFilterDecision(output: string) {
+export class ArticleAnalysisTimeoutError extends Error {
+  skipReason: ArticleSkipReason = "summary_timeout";
+
+  constructor() {
+    super("Article analysis exceeded the 60-second limit");
+    this.name = "ArticleAnalysisTimeoutError";
+  }
+}
+
+const articleAnalysisTimeoutMs = 60_000;
+const articleAnalysisMaxOutputTokens = 15_000;
+
+export function parseFilterDecision(output: string): FilterDecision {
   const answer = output.trim().toLocaleLowerCase("en-GB");
-  if (answer.startsWith("yes")) return true;
-  if (answer.startsWith("no")) return false;
+  if (answer === "yes" || answer === "no" || answer === "maybe") return answer;
   throw new ModelResponseError(
-    "The filter did not start its answer with YES or NO",
+    "The filter did not answer with exactly YES, NO, or MAYBE",
     output,
   );
 }
 
 export type ArticleFilter = {
+  ready(): Promise<void>;
   decide(candidate: {
     headline: string;
     byline: string;
     sourceName: string;
-  }): Promise<boolean>;
+  }): Promise<FilterDecision>;
   lastTurn():
     | (ContextStatus & {
         startedNewSession: boolean;
@@ -117,6 +139,9 @@ export function createArticleFilter(
 
   return {
     lastTurn: () => lastTurn,
+    async ready() {
+      await client.context;
+    },
     async decide(candidate) {
       const modelContext = await client.context;
       const startedNewSession = previousResponseId === undefined;
@@ -131,6 +156,7 @@ export function createArticleFilter(
 Byline: ${candidate.byline}
 Source: ${candidate.sourceName}`,
         previousResponseId,
+        reasoningEffort: "none",
       });
       sessionTurn += 1;
       const usage = contextStatus(
@@ -149,9 +175,9 @@ Source: ${candidate.sourceName}`,
         startedNewSession,
         nextTurnStartsNewSession,
       };
-      let included: boolean;
+      let decision: FilterDecision;
       try {
-        included = parseFilterDecision(turn.output);
+        decision = parseFilterDecision(turn.output);
       } catch (error) {
         previousResponseId = undefined;
         throw error;
@@ -159,15 +185,16 @@ Source: ${candidate.sourceName}`,
       previousResponseId = nextTurnStartsNewSession
         ? undefined
         : turn.responseId;
-      return included;
+      return decision;
     },
   };
 }
 
-export async function analyseArticle(
+async function analyseArticleWithController(
   content: string,
-  onTurn?: (turn: ArticleAnalysisTurn) => void,
-  abortController?: AbortController,
+  onTurn: ((turn: ArticleAnalysisTurn) => void) | undefined,
+  abortController: AbortController,
+  reasoningEffort?: "none",
 ): Promise<ArticleAnalysis> {
   const client = createResponsesClient(abortController);
   const modelContext = await client.context;
@@ -186,6 +213,8 @@ export async function analyseArticle(
     system: articleAnalyserSystemPrompt,
     prompt: content,
     schema: articleBasicsSchema,
+    reasoningEffort,
+    maxOutputTokens: articleAnalysisMaxOutputTokens,
   });
   const basicsContext = contextStatus(modelContext, basics, 1, 0);
   onTurn?.({
@@ -195,7 +224,7 @@ export async function analyseArticle(
     context: basicsContext,
     durationMs: Math.round(performance.now() - basicsStarted),
   });
-  if (basics.output.rejected) {
+  if (basics.output.skipReason) {
     return {
       ...basics.output,
       pointsMarkdown: "",
@@ -215,10 +244,16 @@ export async function analyseArticle(
     );
   }
   const pointsStarted = performance.now();
+  const remainingOutputTokens = Math.max(
+    1,
+    articleAnalysisMaxOutputTokens - basicsContext.turnOutputTokens,
+  );
   const points = await client.text({
     system: articleAnalyserSystemPrompt,
     prompt: pointsPrompt,
     previousResponseId: basics.responseId,
+    reasoningEffort,
+    maxOutputTokens: remainingOutputTokens,
   });
   const pointsContext = contextStatus(
     modelContext,
@@ -237,4 +272,62 @@ export async function analyseArticle(
     ...basics.output,
     pointsMarkdown: points.output,
   };
+}
+
+async function analyseArticleAttempt(
+  content: string,
+  onTurn: ((turn: ArticleAnalysisTurn) => void) | undefined,
+  abortController: AbortController | undefined,
+  reasoningEffort?: "none",
+): Promise<ArticleAnalysis> {
+  const analysisController = new AbortController();
+  let timedOut = false;
+  const forwardAbort = () =>
+    analysisController.abort(abortController?.signal.reason);
+  if (abortController?.signal.aborted) forwardAbort();
+  else abortController?.signal.addEventListener("abort", forwardAbort, {
+    once: true,
+  });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    analysisController.abort(
+      new DOMException("Article analysis timed out", "TimeoutError"),
+    );
+  }, articleAnalysisTimeoutMs);
+
+  try {
+    return await analyseArticleWithController(
+      content,
+      onTurn,
+      analysisController,
+      reasoningEffort,
+    );
+  } catch (error) {
+    if (timedOut) throw new ArticleAnalysisTimeoutError();
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    abortController?.signal.removeEventListener("abort", forwardAbort);
+  }
+}
+
+export async function analyseArticle(
+  content: string,
+  onTurn?: (turn: ArticleAnalysisTurn) => void,
+  abortController?: AbortController,
+): Promise<ArticleAnalysis> {
+  try {
+    return await analyseArticleAttempt(content, onTurn, abortController);
+  } catch (error) {
+    if (!(error instanceof ArticleAnalysisTimeoutError)) throw error;
+    console.warn(
+      "[analysis] Article analysis timed out; retrying once with thinking off",
+    );
+    return analyseArticleAttempt(
+      content,
+      onTurn,
+      abortController,
+      "none",
+    );
+  }
 }

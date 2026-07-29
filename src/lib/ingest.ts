@@ -1,5 +1,9 @@
 import { fetchArticle } from "./article.ts";
-import { analyseArticle, createArticleFilter } from "./ai.ts";
+import {
+  analyseArticle,
+  ArticleAnalysisTimeoutError,
+  createArticleFilter,
+} from "./ai.ts";
 import { config } from "./config.ts";
 import { relatedImageForTopics } from "./images.ts";
 import { calculateRefreshPercent } from "./refresh-progress.ts";
@@ -13,6 +17,7 @@ import {
 } from "./store.ts";
 import type {
   Article,
+  FilterDecision,
   FilterResult,
   RefreshProgress,
   Source,
@@ -30,6 +35,9 @@ type Candidate = {
   id: string;
   source: Source;
   item: FeedItem;
+};
+type AcceptedCandidate = Candidate & {
+  filterDecision: Exclude<FilterDecision, "no">;
 };
 
 export async function fetchFeed(source: Source, signal?: AbortSignal) {
@@ -58,12 +66,18 @@ function initialProgress(
     percent: 0,
     startedAt: new Date().toISOString(),
     sources: { completed: 0, total: sourceTotal, failed: 0 },
-    filters: { completed: 0, total: 0, accepted: 0, failed: 0 },
+    filters: {
+      completed: 0,
+      total: 0,
+      accepted: 0,
+      maybe: 0,
+      failed: 0,
+    },
     analyses: {
       completed: 0,
       total: 0,
       stored: 0,
-      rejected: 0,
+      skipped: 0,
       failed: 0,
     },
   };
@@ -99,7 +113,7 @@ export async function runIngestion(options: IngestionOptions = {}) {
     ...state.articles.map((article) => article.id),
   ]);
   const candidates: Candidate[] = [];
-  const acceptedCandidates: Candidate[] = [];
+  const acceptedCandidates: AcceptedCandidate[] = [];
   const analysedArticles: Article[] = [];
   const pendingFilterResults: FilterResult[] = [];
   const pendingSeenArticleIds: string[] = [];
@@ -155,6 +169,7 @@ export async function runIngestion(options: IngestionOptions = {}) {
     candidates.length > 0
       ? createArticleFilter(state.topicPreferences, options.abortController)
       : undefined;
+  await filter?.ready();
 
   for (const candidate of candidates) {
     signal?.throwIfAborted();
@@ -164,7 +179,7 @@ export async function runIngestion(options: IngestionOptions = {}) {
       `[refresh] Filtering article ${position}/${progress.filters.total}: "${candidate.item.headline}"`,
     );
     try {
-      const included = await filter!.decide({
+      const decision = await filter!.decide({
         headline: candidate.item.headline,
         byline: candidate.item.byline,
         sourceName: candidate.source.name,
@@ -174,15 +189,18 @@ export async function runIngestion(options: IngestionOptions = {}) {
         url: candidate.item.url,
         headline: candidate.item.headline,
         publishedAt: candidate.item.publishedAt,
-        included,
+        decision,
         filteredAt: new Date().toISOString(),
       });
       console.info(
-        `[refresh] Filter response ${position}/${progress.filters.total}: ${included ? "YES" : "NO"}`,
+        `[refresh] Filter response ${position}/${progress.filters.total}: ${decision.toUpperCase()}`,
       );
-      if (included) {
+      if (decision === "yes") {
         progress.filters.accepted += 1;
-        acceptedCandidates.push(candidate);
+        acceptedCandidates.push({ ...candidate, filterDecision: decision });
+      } else if (decision === "maybe") {
+        progress.filters.maybe += 1;
+        acceptedCandidates.push({ ...candidate, filterDecision: decision });
       } else {
         pendingSeenArticleIds.push(candidate.id);
       }
@@ -209,12 +227,14 @@ export async function runIngestion(options: IngestionOptions = {}) {
   for (const candidate of acceptedCandidates) {
     signal?.throwIfAborted();
     let stepFinished = false;
+    let publisherImage: string | undefined = candidate.item.imageUrl;
     const position = progress.analyses.completed + 1;
     console.info(
       `[refresh] Analysing article ${position}/${progress.analyses.total}: "${candidate.item.headline}"`,
     );
     try {
       const article = await fetchArticle(candidate.item.url, signal);
+      publisherImage ??= article.imageUrl;
       const analysis = await analyseArticle(
         `${candidate.item.headline}\n\n${candidate.item.byline}\n\n${article.text}`,
         (turn) => {
@@ -222,7 +242,7 @@ export async function runIngestion(options: IngestionOptions = {}) {
             const characterCount =
               turn.output.headline.length + turn.output.summary.length;
             console.info(
-              `[refresh] Analysis response (metadata): rejected=${turn.output.rejected}, ${turn.output.tags.length} tags, ${characterCount} characters`,
+              `[refresh] Analysis response (metadata): skipReason=${turn.output.skipReason ?? "none"}, ${turn.output.tags.length} tags, ${characterCount} characters`,
             );
           } else {
             console.info(
@@ -233,7 +253,6 @@ export async function runIngestion(options: IngestionOptions = {}) {
         options.abortController,
       );
       signal?.throwIfAborted();
-      const publisherImage = candidate.item.imageUrl ?? article.imageUrl;
       const image = publisherImage
         ? {
             url: publisherImage,
@@ -256,12 +275,13 @@ export async function runIngestion(options: IngestionOptions = {}) {
         imageUrl: image.url,
         imageAlt: image.alt,
         imageKind: image.kind,
+        filterDecision: candidate.filterDecision,
         topicRatings: [],
         hidden: false,
-        rejected: analysis.rejected,
+        skipReason: analysis.skipReason ?? undefined,
       });
-      if (analysis.rejected) {
-        progress.analyses.rejected += 1;
+      if (analysis.skipReason) {
+        progress.analyses.skipped += 1;
       } else {
         progress.analyses.stored += 1;
       }
@@ -269,10 +289,45 @@ export async function runIngestion(options: IngestionOptions = {}) {
       stepFinished = true;
     } catch (error) {
       if (signal?.aborted) throw error;
-      progress.analyses.failed += 1;
-      console.warn(
-        `[refresh] Skipped analysis for "${candidate.item.headline}": ${errorMessage(error)}`,
-      );
+      if (error instanceof ArticleAnalysisTimeoutError) {
+        const image = publisherImage
+          ? {
+              url: publisherImage,
+              alt: `Image supplied with “${candidate.item.headline}”`,
+              kind: "article" as const,
+            }
+          : relatedImageForTopics([]);
+        analysedArticles.push({
+          id: candidate.id,
+          sourceId: candidate.source.id,
+          sourceName: candidate.source.name,
+          url: candidate.item.url,
+          headline: candidate.item.headline,
+          byline: candidate.item.byline,
+          publishedAt: candidate.item.publishedAt,
+          discoveredAt: new Date().toISOString(),
+          topics: [],
+          summary: error.message,
+          pointsMarkdown: "",
+          imageUrl: image.url,
+          imageAlt: image.alt,
+          imageKind: image.kind,
+          filterDecision: candidate.filterDecision,
+          topicRatings: [],
+          hidden: false,
+          skipReason: error.skipReason,
+        });
+        pendingSeenArticleIds.push(candidate.id);
+        progress.analyses.skipped += 1;
+        console.warn(
+          `[refresh] Skipped "${candidate.item.headline}" with reason ${error.skipReason}: ${error.message}`,
+        );
+      } else {
+        progress.analyses.failed += 1;
+        console.warn(
+          `[refresh] Analysis failed for "${candidate.item.headline}": ${errorMessage(error)}`,
+        );
+      }
       stepFinished = true;
     } finally {
       if (stepFinished) {

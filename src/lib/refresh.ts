@@ -16,12 +16,12 @@ const emptyProgress: RefreshProgress = {
   phase: "idle",
   percent: 0,
   sources: { completed: 0, total: 0, failed: 0 },
-  filters: { completed: 0, total: 0, accepted: 0, failed: 0 },
+  filters: { completed: 0, total: 0, accepted: 0, maybe: 0, failed: 0 },
   analyses: {
     completed: 0,
     total: 0,
     stored: 0,
-    rejected: 0,
+    skipped: 0,
     failed: 0,
   },
 };
