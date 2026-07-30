@@ -9,10 +9,17 @@ test("stores ratings, skipped articles, and retained filter decisions", async ()
   const directory = mkdtempSync(join(tmpdir(), "signal-desk-store-"));
   process.env.NEWSBREW_CONFIG_JSON = JSON.stringify({
     databaseFile: join(directory, "news.sqlite"),
+    filter: {
+      generalGuidance: "Imported example guidance.",
+    },
   });
 
   try {
     const store = await import("./store.ts");
+    assert.equal(
+      store.readSettings().filter.generalGuidance,
+      "Imported example guidance.",
+    );
     assert.equal(store.accessTokenRequired(), false);
     assert.equal(store.setAccessToken("Newsbrew-Access!42"), true);
     assert.equal(store.verifyAccessToken("incorrect"), false);
@@ -20,27 +27,48 @@ test("stores ratings, skipped articles, and retained filter decisions", async ()
     assert.equal(store.setAccessToken(""), false);
     assert.equal(store.accessTokenRequired(), false);
 
+    const initialSettings = store.readSettings();
+    store.updateSettings({
+      pollIntervalMinutes: initialSettings.runtime.pollIntervalMinutes,
+      maxItemsPerSource: initialSettings.runtime.maxItemsPerSource,
+      llmBaseURL: initialSettings.llm.baseURL,
+      llmModel: initialSettings.llm.model,
+      generalGuidance: "Prefer detailed example reporting.",
+    });
+    assert.equal(
+      store.readSettings().filter.generalGuidance,
+      "Prefer detailed example reporting.",
+    );
+    assert.equal(
+      store.readSettingsSnapshot().filter.generalGuidance,
+      "Prefer detailed example reporting.",
+    );
+
+    await store.addSource({
+      id: "example-news",
+      name: "Example News",
+      url: "https://example.com/feed.xml",
+      enabled: true,
+    });
     const article: Article = {
       id: "funding-story",
-      sourceId: "bbc-news",
-      sourceName: "BBC News",
+      sourceId: "example-news",
+      sourceName: "Example News",
       url: "https://example.com/funding",
-      headline: "The Boring Company raises infrastructure funding",
+      headline: "Example company raises project funding",
       byline: "Alex Reporter",
       discoveredAt: new Date().toISOString(),
       topics: [
-        "Elon Musk",
-        "Boring Company",
+        "example company",
         "finance",
-        "infrastructure",
-        "tunnelling",
+        "project delivery",
         "venture capital",
       ],
-      summary: "The company is raising new capital for tunnelling projects.",
+      summary: "The company is raising new capital for a project.",
       pointsMarkdown:
-        "- The funding values the company at a reported $20 billion.",
-      imageUrl: "https://example.com/tunnel.jpg",
-      imageAlt: "Tunnel",
+        "- The funding values the company at a reported amount.",
+      imageUrl: "https://example.com/project.jpg",
+      imageAlt: "Project",
       imageKind: "article",
       filterDecision: "yes",
       topicRatings: [],
@@ -59,13 +87,13 @@ test("stores ratings, skipped articles, and retained filter decisions", async ()
     assert.equal(state.articles[0]?.topicRatings.length, 2);
 
     await store.recordTopicRatings(article.id, [
-      { topic: "infrastructure", reaction: "like" },
+      { topic: "project delivery", reaction: "like" },
       { topic: "venture capital", reaction: "dislike" },
     ]);
     state = await store.readState();
     assert.equal(state.articles[0]?.hidden, false);
     assert.equal(
-      state.topicPreferences.find((item) => item.topic === "infrastructure")
+      state.topicPreferences.find((item) => item.topic === "project delivery")
         ?.reaction,
       "like",
     );
@@ -89,6 +117,8 @@ test("stores ratings, skipped articles, and retained filter decisions", async ()
     await store.recordFilterResult({
       url: "https://example.com/old",
       headline: "Old result",
+      byline: "Old author",
+      sourceName: "Old Source",
       publishedAt: "2026-04-01T00:00:00.000Z",
       decision: "no",
       filteredAt: "2026-05-01T00:00:00.000Z",
@@ -96,6 +126,8 @@ test("stores ratings, skipped articles, and retained filter decisions", async ()
     await store.recordFilterResult({
       url: "https://example.com/current",
       headline: "Current result",
+      byline: "Current author",
+      sourceName: "Current Source",
       publishedAt: "2026-07-27T00:00:00.000Z",
       decision: "maybe",
       filteredAt: now.toISOString(),
@@ -105,9 +137,18 @@ test("stores ratings, skipped articles, and retained filter decisions", async ()
     assert.deepEqual(
       (await store.readFilterResults()).map((result) => ({
         headline: result.headline,
+        byline: result.byline,
+        sourceName: result.sourceName,
         decision: result.decision,
       })),
-      [{ headline: "Current result", decision: "maybe" }],
+      [
+        {
+          headline: "Current result",
+          byline: "Current author",
+          sourceName: "Current Source",
+          decision: "maybe",
+        },
+      ],
     );
 
     await assert.rejects(
@@ -116,6 +157,8 @@ test("stores ratings, skipped articles, and retained filter decisions", async ()
           {
             url: "https://example.com/rolled-back",
             headline: "Rolled back result",
+            byline: "Rollback author",
+            sourceName: "Rollback Source",
             decision: "yes",
             filteredAt: now.toISOString(),
           },

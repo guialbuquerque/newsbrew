@@ -46,6 +46,7 @@ const output = {
   databaseFile: portableDatabaseFile(),
   runtime: snapshot.runtime,
   llm: snapshot.llm,
+  filter: snapshot.filter,
   ...(snapshot.accessTokenRequired
     ? preservedAccessToken === undefined
       ? {}

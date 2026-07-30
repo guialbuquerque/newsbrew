@@ -22,55 +22,6 @@ import type {
   TopicRating,
 } from "./types.ts";
 
-const seededTopicPreferences: TopicPreference[] = [
-  "AI",
-  "foundation models",
-  "open-source AI",
-  "AI agents",
-  "AI security",
-  "developer tools",
-  "technology economics",
-  "technology policy",
-  "privacy",
-  "competition",
-  "Apple",
-  "UK news",
-  "London news",
-  "transport",
-  "housing",
-  "immigration",
-  "trade",
-  "infrastructure",
-  "geopolitics",
-  "public policy",
-  "climate science",
-  "space",
-  "computing",
-  "emerging technology",
-  "arts and culture",
-].map((topic) => ({ topic, reaction: "like", source: "perplexity" }));
-
-seededTopicPreferences.push(
-  ...[
-    "sports results",
-    "celebrity gossip",
-    "generic market news",
-    "ordinary corporate earnings",
-    "outrage bait",
-    "political soundbites",
-    "unverified rumours",
-    "incremental war updates",
-    "unsupported product speculation",
-    "personal scandals",
-  ].map(
-    (topic): TopicPreference => ({
-      topic,
-      reaction: "dislike",
-      source: "perplexity",
-    }),
-  ),
-);
-
 mkdirSync(dirname(config.databaseFile), { recursive: true });
 const database = new DatabaseSync(config.databaseFile);
 database.exec(`
@@ -103,8 +54,7 @@ database.exec(`
     filter_decision TEXT NOT NULL DEFAULT 'yes'
       CHECK (filter_decision IN ('yes', 'no', 'maybe')),
     hidden INTEGER NOT NULL DEFAULT 0,
-    skip_reason TEXT,
-    rejected INTEGER NOT NULL DEFAULT 0
+    skip_reason TEXT
   );
 
   CREATE TABLE IF NOT EXISTS article_topics (
@@ -141,8 +91,9 @@ database.exec(`
     id INTEGER PRIMARY KEY,
     url TEXT NOT NULL,
     headline TEXT NOT NULL,
+    byline TEXT NOT NULL DEFAULT '',
+    source_name TEXT NOT NULL,
     published_at TEXT,
-    included INTEGER NOT NULL CHECK (included IN (0, 1)),
     decision TEXT NOT NULL
       CHECK (decision IN ('yes', 'no', 'maybe')),
     filtered_at TEXT NOT NULL
@@ -159,7 +110,8 @@ database.exec(`
     max_items_per_source INTEGER NOT NULL,
     llm_base_url TEXT NOT NULL,
     llm_model TEXT NOT NULL,
-    llm_api_key TEXT NOT NULL
+    llm_api_key TEXT NOT NULL,
+    general_guidance TEXT NOT NULL DEFAULT ''
   );
 
   CREATE TABLE IF NOT EXISTS auth_settings (
@@ -185,82 +137,8 @@ database.exec(`
     ON filter_results(filtered_at DESC);
 `);
 
-database.exec(`
-  DROP TABLE IF EXISTS passkeys;
-  DROP TABLE IF EXISTS auth_challenges;
-`);
-
-const articleColumns = database
-  .prepare("PRAGMA table_info(articles)")
-  .all() as Array<{ name: string }>;
-if (!articleColumns.some((column) => column.name === "rejected")) {
-  database.exec(
-    "ALTER TABLE articles ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0",
-  );
-}
-if (!articleColumns.some((column) => column.name === "filter_decision")) {
-  database.exec(
-    `ALTER TABLE articles ADD COLUMN filter_decision TEXT NOT NULL DEFAULT 'yes'
-      CHECK (filter_decision IN ('yes', 'no', 'maybe'))`,
-  );
-}
-if (!articleColumns.some((column) => column.name === "skip_reason")) {
-  database.exec("ALTER TABLE articles ADD COLUMN skip_reason TEXT");
-  database.exec(`
-    UPDATE articles
-    SET skip_reason = 'legacy_rejected'
-    WHERE rejected = 1
-  `);
-}
-
-const filterResultColumns = database
-  .prepare("PRAGMA table_info(filter_results)")
-  .all() as Array<{ name: string }>;
-if (!filterResultColumns.some((column) => column.name === "decision")) {
-  database.exec(
-    `ALTER TABLE filter_results ADD COLUMN decision TEXT NOT NULL DEFAULT 'no'
-      CHECK (decision IN ('yes', 'no', 'maybe'))`,
-  );
-  database.exec(`
-    UPDATE filter_results
-    SET decision = CASE included WHEN 1 THEN 'yes' ELSE 'no' END
-  `);
-}
-
-const authSettingColumns = database
-  .prepare("PRAGMA table_info(auth_settings)")
-  .all() as Array<{ name: string }>;
-if (!authSettingColumns.some((column) => column.name === "access_token_salt")) {
-  database.exec(
-    "ALTER TABLE auth_settings ADD COLUMN access_token_salt TEXT NOT NULL DEFAULT ''",
-  );
-}
-if (!authSettingColumns.some((column) => column.name === "access_token_hash")) {
-  database.exec(
-    "ALTER TABLE auth_settings ADD COLUMN access_token_hash TEXT NOT NULL DEFAULT ''",
-  );
-}
-
 function topicKey(topic: string) {
   return topic.trim().toLocaleLowerCase("en-GB").replace(/\s+/g, " ");
-}
-
-function seedTopicPreferences() {
-  const insert = database.prepare(`
-    INSERT OR IGNORE INTO topic_preferences
-      (topic_key, topic, reaction, source, updated_at)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-  const now = new Date().toISOString();
-  for (const preference of seededTopicPreferences) {
-    insert.run(
-      topicKey(preference.topic),
-      preference.topic,
-      preference.reaction,
-      preference.source,
-      now,
-    );
-  }
 }
 
 function insertSource(source: Source) {
@@ -359,28 +237,6 @@ function initializeData() {
 
   database.exec("BEGIN IMMEDIATE");
   try {
-    const sources: Source[] = [
-      {
-        id: "bbc-news",
-        name: "BBC News",
-        url: "https://feeds.bbci.co.uk/news/rss.xml",
-        enabled: true,
-      },
-      {
-        id: "guardian-uk",
-        name: "The Guardian · UK",
-        url: "https://www.theguardian.com/uk-news/rss",
-        enabled: true,
-      },
-      {
-        id: "ars-technica",
-        name: "Ars Technica",
-        url: "https://feeds.arstechnica.com/arstechnica/index",
-        enabled: true,
-      },
-    ];
-    sources.forEach(insertSource);
-    seedTopicPreferences();
     database
       .prepare(`
         INSERT INTO app_meta (key, value)
@@ -405,8 +261,8 @@ function initializeSettings() {
     .prepare(`
       INSERT OR IGNORE INTO app_settings (
         id, poll_interval_minutes, max_items_per_source,
-        llm_base_url, llm_model, llm_api_key
-      ) VALUES (1, ?, ?, ?, ?, ?)
+        llm_base_url, llm_model, llm_api_key, general_guidance
+      ) VALUES (1, ?, ?, ?, ?, ?, ?)
     `)
     .run(
       config.pollIntervalMinutes,
@@ -414,6 +270,7 @@ function initializeSettings() {
       config.lmStudioBaseURL,
       config.lmStudioModel,
       config.lmStudioApiKey,
+      config.filterGeneralGuidance,
     );
   database
     .prepare(`
@@ -440,13 +297,14 @@ export function importConfiguredSettings(force = false) {
 
   database.exec("BEGIN IMMEDIATE");
   try {
-    if (next.runtime || next.llm) {
+    if (next.runtime || next.llm || next.filter) {
       const current = database
         .prepare(`
           SELECT poll_interval_minutes AS pollIntervalMinutes,
             max_items_per_source AS maxItemsPerSource,
             llm_base_url AS llmBaseURL, llm_model AS llmModel,
-            llm_api_key AS llmApiKey
+            llm_api_key AS llmApiKey,
+            general_guidance AS generalGuidance
           FROM app_settings WHERE id = 1
         `)
         .get() as {
@@ -455,6 +313,7 @@ export function importConfiguredSettings(force = false) {
         llmBaseURL: string;
         llmModel: string;
         llmApiKey: string;
+        generalGuidance: string;
       };
       database
         .prepare(`
@@ -463,7 +322,8 @@ export function importConfiguredSettings(force = false) {
             max_items_per_source = ?,
             llm_base_url = ?,
             llm_model = ?,
-            llm_api_key = ?
+            llm_api_key = ?,
+            general_guidance = ?
           WHERE id = 1
         `)
         .run(
@@ -472,6 +332,7 @@ export function importConfiguredSettings(force = false) {
           next.llm?.baseURL ?? current.llmBaseURL,
           next.llm?.model ?? current.llmModel,
           next.llm?.apiKey ?? current.llmApiKey,
+          next.filter?.generalGuidance ?? current.generalGuidance,
         );
     }
 
@@ -537,7 +398,8 @@ function hydrateRuntimeConfig() {
         max_items_per_source AS maxItemsPerSource,
         llm_base_url AS lmStudioBaseURL,
         llm_model AS lmStudioModel,
-        llm_api_key AS lmStudioApiKey
+        llm_api_key AS lmStudioApiKey,
+        general_guidance AS filterGeneralGuidance
       FROM app_settings WHERE id = 1
     `)
     .get() as {
@@ -546,6 +408,7 @@ function hydrateRuntimeConfig() {
     lmStudioBaseURL: string;
     lmStudioModel: string;
     lmStudioApiKey: string;
+    filterGeneralGuidance: string;
   };
   applyRuntimeConfig(settings);
 }
@@ -711,7 +574,8 @@ export function readSettings() {
       SELECT poll_interval_minutes AS pollIntervalMinutes,
         max_items_per_source AS maxItemsPerSource,
         llm_base_url AS baseURL, llm_model AS model,
-        length(llm_api_key) > 0 AS hasApiKey
+        length(llm_api_key) > 0 AS hasApiKey,
+        general_guidance AS generalGuidance
       FROM app_settings WHERE id = 1
     `)
     .get() as {
@@ -720,6 +584,7 @@ export function readSettings() {
     baseURL: string;
     model: string;
     hasApiKey: number;
+    generalGuidance: string;
   };
   return {
     runtime: {
@@ -731,6 +596,9 @@ export function readSettings() {
       model: settings.model,
       hasApiKey: Boolean(settings.hasApiKey),
     },
+    filter: {
+      generalGuidance: settings.generalGuidance,
+    },
   };
 }
 
@@ -740,7 +608,8 @@ export function readSettingsSnapshot() {
       SELECT poll_interval_minutes AS pollIntervalMinutes,
         max_items_per_source AS maxItemsPerSource,
         llm_base_url AS baseURL, llm_model AS model,
-        llm_api_key AS apiKey
+        llm_api_key AS apiKey,
+        general_guidance AS generalGuidance
       FROM app_settings WHERE id = 1
     `)
     .get() as {
@@ -749,6 +618,7 @@ export function readSettingsSnapshot() {
     baseURL: string;
     model: string;
     apiKey: string;
+    generalGuidance: string;
   };
   const sources = (
     database
@@ -785,6 +655,9 @@ export function readSettingsSnapshot() {
       model: settings.model,
       apiKey: settings.apiKey,
     },
+    filter: {
+      generalGuidance: settings.generalGuidance,
+    },
     sources,
     topics: {
       like: preferences
@@ -804,6 +677,7 @@ export function updateSettings(next: {
   llmBaseURL: string;
   llmModel: string;
   llmApiKey?: string;
+  generalGuidance: string;
 }) {
   const current = database
     .prepare("SELECT llm_api_key AS apiKey FROM app_settings WHERE id = 1")
@@ -816,7 +690,8 @@ export function updateSettings(next: {
         max_items_per_source = ?,
         llm_base_url = ?,
         llm_model = ?,
-        llm_api_key = ?
+        llm_api_key = ?,
+        general_guidance = ?
       WHERE id = 1
     `)
     .run(
@@ -825,6 +700,7 @@ export function updateSettings(next: {
       next.llmBaseURL,
       next.llmModel,
       apiKey,
+      next.generalGuidance.trim(),
     );
   hydrateRuntimeConfig();
   return readSettings();
@@ -918,14 +794,15 @@ export async function recordFilterResult(result: FilterResult) {
   database
     .prepare(`
       INSERT INTO filter_results
-        (url, headline, published_at, included, decision, filtered_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+        (url, headline, byline, source_name, published_at, decision, filtered_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `)
     .run(
       result.url,
       result.headline,
+      result.byline,
+      result.sourceName,
       result.publishedAt ?? null,
-      result.decision === "no" ? 0 : 1,
       result.decision,
       result.filteredAt,
     );
@@ -943,8 +820,8 @@ export async function readFilterResults(): Promise<FilterResult[]> {
   return (
     database
       .prepare(`
-        SELECT id, url, headline, published_at AS publishedAt,
-          decision, filtered_at AS filteredAt
+        SELECT id, url, headline, byline, source_name AS sourceName,
+          published_at AS publishedAt, decision, filtered_at AS filteredAt
         FROM filter_results ORDER BY id
       `)
       .all() as FilterResult[]
@@ -1093,8 +970,8 @@ export async function commitIngestionRun(input: {
 }) {
   const insertFilterResult = database.prepare(`
     INSERT INTO filter_results
-      (url, headline, published_at, included, decision, filtered_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+      (url, headline, byline, source_name, published_at, decision, filtered_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
   const insertSeen = database.prepare(`
     INSERT OR IGNORE INTO seen_articles (article_id, seen_at) VALUES (?, ?)
@@ -1107,8 +984,9 @@ export async function commitIngestionRun(input: {
       insertFilterResult.run(
         result.url,
         result.headline,
+        result.byline,
+        result.sourceName,
         result.publishedAt ?? null,
-        result.decision === "no" ? 0 : 1,
         result.decision,
         result.filteredAt,
       );

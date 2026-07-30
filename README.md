@@ -7,16 +7,20 @@ local model server such as LM Studio.
 ## What it does
 
 1. Polls your RSS and Atom sources.
-2. Sends each new headline, byline, and source through one stateful binary
-   filter session. Newsbrew reads the model's active and maximum context
-   lengths from LM Studio, tracks exact Responses token usage after every turn,
-   and starts a fresh filter chain before the next turn would exceed the active
-   window.
-3. Fetches articles accepted by that filter.
+2. Sends each new headline, byline, and source through one stateful tri-state
+   filter session. `YES` is clearly wanted, `MAYBE` is neutral or ambiguous,
+   and `NO` is an explicit rejection. Newsbrew reads the model's active and
+   maximum context lengths from LM Studio, tracks exact Responses token usage
+   after every turn, and starts a fresh filter chain before the next turn would
+   exceed the active window.
+3. Fetches and analyses both `YES` and `MAYBE` articles. `MAYBE` stories remain
+   chronologically inline with a more compact presentation; `NO` stories are
+   suppressed.
 4. Analyses each accepted article in a two-turn stateful session: first the
    headline, quick summary, and tags; then detailed Markdown points.
-5. Lets you rate each story topic independently and feeds those signals back
-   into future filtering prompts.
+5. Combines private natural-language guidance with positive and negative topic
+   signals. You can rate each story topic independently and feed those signals
+   back into future filtering prompts.
 
 Everything is stored locally in `data/news.sqlite` using Node's built-in
 `node:sqlite` module directly.
@@ -84,6 +88,7 @@ pnpm dev
 pnpm ingest
 pnpm tune:filter
 pnpm tune:analyser
+pnpm benchmark
 pnpm worker
 pnpm check
 pnpm test
@@ -93,11 +98,11 @@ pnpm build
 - `pnpm dev` runs the SolidStart app.
 - `pnpm ingest` performs one feed scan.
 - `pnpm tune:filter` fetches and judges every candidate from the enabled feeds
-  through one stateful filter session, logging every binary result as JSONL. It is
-  read-only: it does not add articles, mark stories as seen, or change topic
-  preferences. Use `-- --limit=2` to reduce the number per source, or
-  `-- --source=ars-technica` to test one source. Redirect stdout if you want to
-  keep a clean JSONL log, for example
+  through one stateful filter session, logging every `YES`, `NO`, or `MAYBE`
+  result as JSONL. It is read-only: it does not add articles, mark stories as
+  seen, or change topic preferences. Use `-- --limit=2` to reduce the number
+  per source, or `-- --source=ars-technica` to test one source. Redirect stdout
+  if you want to keep a clean JSONL log, for example
   `pnpm --silent tune:filter > filter-run.jsonl`.
 - `pnpm tune:analyser` fetches full articles and runs the two-turn analyser,
   logging the exact article input, each structured model response, response ID,
@@ -105,6 +110,11 @@ pnpm build
   read-only. The same `-- --limit=2` and `-- --source=ars-technica` options
   apply. To save a clean log, use
   `pnpm --silent tune:analyser > analyser-run.jsonl`.
+- `pnpm benchmark` compares downloaded local models with the production
+  tri-state prompt and stateful session shape. It reads the private reader
+  guidance, topic profile, and labeled reference set from ignored
+  `data/benchmark-*` JSON files and writes an ignored atomic report there. See
+  `BENCHMARKING.md` before preparing or interpreting a run.
 - `pnpm worker` scans immediately and then uses the polling interval stored in
   the database.
 
@@ -112,6 +122,10 @@ Both ingestion commands run TypeScript directly with Node's
 `--experimental-strip-types` flag. The TypeScript configuration enables
 `erasableSyntaxOnly`, and runtime imports use explicit `.ts` extensions so the
 worker stays compatible with native Node type stripping.
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the durable pipeline and session
+decisions, and [BENCHMARKING.md](./BENCHMARKING.md) before comparing models or
+prompts.
 
 ## Notes
 

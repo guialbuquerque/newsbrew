@@ -127,10 +127,11 @@ function contextStatus<T>(
 
 export function createArticleFilter(
   topicPreferences: TopicPreference[],
+  generalGuidance = "",
   abortController?: AbortController,
 ): ArticleFilter {
   const client = createResponsesClient(abortController);
-  const system = filterSystemPrompt(topicPreferences);
+  const system = filterSystemPrompt(topicPreferences, generalGuidance);
   let previousResponseId: string | undefined;
   let sessionTokens = 0;
   let largestTurnTokens = 0;

@@ -34,7 +34,10 @@ if (sources.length === 0) {
   );
 }
 
-const filter = createArticleFilter(state.topicPreferences);
+const filter = createArticleFilter(
+  state.topicPreferences,
+  config.filterGeneralGuidance,
+);
 const startedAt = new Date().toISOString();
 let sequence = 0;
 let judged = 0;

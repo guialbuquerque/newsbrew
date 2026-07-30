@@ -167,7 +167,11 @@ export async function runIngestion(options: IngestionOptions = {}) {
   publish();
   const filter =
     candidates.length > 0
-      ? createArticleFilter(state.topicPreferences, options.abortController)
+      ? createArticleFilter(
+          state.topicPreferences,
+          config.filterGeneralGuidance,
+          options.abortController,
+        )
       : undefined;
   await filter?.ready();
 
@@ -188,6 +192,8 @@ export async function runIngestion(options: IngestionOptions = {}) {
       pendingFilterResults.push({
         url: candidate.item.url,
         headline: candidate.item.headline,
+        byline: candidate.item.byline,
+        sourceName: candidate.source.name,
         publishedAt: candidate.item.publishedAt,
         decision,
         filteredAt: new Date().toISOString(),

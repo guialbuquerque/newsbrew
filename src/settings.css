@@ -71,7 +71,8 @@
 
 .topic-form input,
 .topic-form select,
-.settings-form input {
+.settings-form input,
+.settings-form textarea {
   min-width: 0;
   padding: 9px 10px;
   color: var(--ink);
@@ -80,12 +81,24 @@
   background: var(--surface);
 }
 
+.settings-form textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+
 .settings-form label {
   display: grid;
   gap: 5px;
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 650;
+}
+
+.settings-form label > span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 450;
+  line-height: 1.4;
 }
 
 .auth-settings {

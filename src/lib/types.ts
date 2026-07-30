@@ -5,8 +5,7 @@ export type ArticleSkipReason =
   | "unusable_article"
   | "headline_mismatch"
   | "insufficient_content"
-  | "summary_timeout"
-  | "legacy_rejected";
+  | "summary_timeout";
 
 export type TopicRating = {
   topic: string;
@@ -51,6 +50,8 @@ export type FilterResult = {
   id?: number;
   url: string;
   headline: string;
+  byline: string;
+  sourceName: string;
   publishedAt?: string;
   decision: FilterDecision;
   filteredAt: string;
@@ -102,6 +103,9 @@ export type AppState = {
 };
 
 export type DashboardState = AppState & {
+  filter: {
+    generalGuidance: string;
+  };
   llm: {
     baseURL: string;
     model: string;

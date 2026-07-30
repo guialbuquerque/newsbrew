@@ -27,6 +27,11 @@ export const importedConfigSchema = z.object({
       apiKey: z.string().optional(),
     })
     .optional(),
+  filter: z
+    .object({
+      generalGuidance: z.string().max(5_000).default(""),
+    })
+    .optional(),
   topics: z
     .object({
       like: z.array(z.string().min(1)).default([]),
@@ -90,6 +95,7 @@ export type RuntimeConfig = {
   lmStudioBaseURL: string;
   lmStudioModel: string;
   lmStudioApiKey: string;
+  filterGeneralGuidance: string;
   pollIntervalMinutes: number;
   maxItemsPerSource: number;
   databaseFile: string;
@@ -99,6 +105,8 @@ export const config: RuntimeConfig = {
   lmStudioBaseURL: importedConfig.value?.llm?.baseURL ?? "",
   lmStudioModel: importedConfig.value?.llm?.model ?? "",
   lmStudioApiKey: importedConfig.value?.llm?.apiKey ?? "",
+  filterGeneralGuidance:
+    importedConfig.value?.filter?.generalGuidance ?? "",
   pollIntervalMinutes:
     importedConfig.value?.runtime?.pollIntervalMinutes ?? 30,
   maxItemsPerSource:

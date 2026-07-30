@@ -8,6 +8,7 @@
     "build": "vite build",
     "start": "node .output/server/index.mjs",
     "preview": "vite preview",
+    "benchmark": "node --experimental-strip-types src/benchmark/index.ts",
     "check": "tsc --noEmit",
     "ingest": "node --experimental-strip-types src/ingest.ts",
     "tune:filter": "node --experimental-strip-types src/tune-filter.ts",

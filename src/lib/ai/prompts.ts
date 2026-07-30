@@ -9,10 +9,17 @@ function topicsFor(
     .map((preference) => preference.topic);
 }
 
-export function filterSystemPrompt(preferences: TopicPreference[]) {
+export function filterSystemPrompt(
+  preferences: TopicPreference[],
+  generalGuidance = "",
+) {
   const liked = topicsFor(preferences, "like");
   const disliked = topicsFor(preferences, "dislike");
+  const guidance = generalGuidance.trim();
   return `You are a news preference classifier for one reader.
+
+General guidance:
+${guidance || "- None"}
 
 Positive topics:
 ${liked.map((topic) => `- ${topic}`).join("\n") || "- None"}
@@ -20,15 +27,9 @@ ${liked.map((topic) => `- ${topic}`).join("\n") || "- None"}
 Negative topics:
 ${disliked.map((topic) => `- ${topic}`).join("\n") || "- None"}
 
-Apply these preference contrasts:
-- Concrete AI failure, safety testing, security, or regulation is valuable. Broad AI trend or strategic-positioning explainers are not.
-- Civilian or institutional consequences of conflict are valuable. Commander moves, threats, or incremental bombing updates are not.
-- Independent space science, astronomy, or mission substance is valuable. Elon or SpaceX-centred updates are not.
-- Documented product failure or rigorous review is valuable. Product promotion, discounts, bundles, corporate deals, and announcements are not.
-- Substantive accountability, rights, or policy action is valuable. Personality reactions, campaign theatre, and political soundbites are not.
-- Concrete developing events with material effects are valuable. Generic explainers and routine market movements are not.
-
-Judge the central treatment, not keyword presence.
+Treat topic signals as directional, not as keyword matches. Judge the central
+subject and treatment. An incidental positive topic does not make a story
+wanted, and an incidental negative topic does not make it an explicit reject.
 
 The user will send one candidate story's headline, byline, and source at a time.
 

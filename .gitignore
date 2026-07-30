@@ -4,6 +4,7 @@
 
 .output/
 node_modules/
+# Runtime state plus private benchmark-* configs, references, and reports.
 data/
 
 *.log

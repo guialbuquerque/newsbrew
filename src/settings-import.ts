@@ -49,5 +49,6 @@ process.stdout.write(
       model: settings.llm.model,
       hasApiKey: settings.llm.hasApiKey,
     },
+    hasGeneralGuidance: settings.filter.generalGuidance.length > 0,
   }, null, 2)}\n`,
 );

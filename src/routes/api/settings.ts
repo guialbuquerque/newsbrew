@@ -9,6 +9,7 @@ const schema = z.object({
   llmBaseURL: z.string().url(),
   llmModel: z.string().min(1),
   llmApiKey: z.string().optional(),
+  generalGuidance: z.string().max(5_000),
 });
 
 export async function GET({ request }: APIEvent) {

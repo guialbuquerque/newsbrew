@@ -134,6 +134,7 @@ export default function Home() {
   const [llmBaseURL, setLlmBaseURL] = createSignal("");
   const [llmModel, setLlmModel] = createSignal("");
   const [llmApiKey, setLlmApiKey] = createSignal("");
+  const [generalGuidance, setGeneralGuidance] = createSignal("");
   const [accessTokenAttempt, setAccessTokenAttempt] = createSignal("");
   const [accessTokenDraft, setAccessTokenDraft] = createSignal("");
 
@@ -163,6 +164,7 @@ export default function Home() {
       setMaxItems(String(next.runtime.maxItemsPerSource));
       setLlmBaseURL(next.llm.baseURL);
       setLlmModel(next.llm.model);
+      setGeneralGuidance(next.filter.generalGuidance);
       if (options.clearNotice) setNotice("");
     } catch (error) {
       setNotice(readError(error));
@@ -487,6 +489,7 @@ export default function Home() {
           maxItemsPerSource: Number(maxItems()),
           llmBaseURL: llmBaseURL(),
           llmModel: llmModel(),
+          generalGuidance: generalGuidance(),
           ...(llmApiKey() ? { llmApiKey: llmApiKey() } : {}),
         }),
       });
@@ -725,8 +728,8 @@ export default function Home() {
                   <span class="empty-icon"><Radio size={24} /></span>
                   <h2>Your desk is ready</h2>
                   <p>
-                    Refresh the digest to scan the starter sources, or review
-                    your topic signals and add feeds first.
+                    Add feeds and preference signals, then refresh the digest
+                    to scan for stories.
                   </p>
                   <Button variant="accent" onClick={refresh} disabled={refreshing()}>
                     <RefreshCw size={15} /> Run first refresh
@@ -876,7 +879,7 @@ export default function Home() {
               <span class="panel-icon"><SlidersHorizontal size={15} /></span>
               <div>
                 <h2>Topic signals</h2>
-                <p>These are the only signals used to filter stories.</p>
+                <p>These support your natural-language guidance.</p>
               </div>
             </div>
             <details class="topic-preferences" open>
@@ -1011,11 +1014,27 @@ export default function Home() {
             <div class="panel-heading">
               <span class="panel-icon"><Cog size={15} /></span>
               <div>
-                <h2>Runtime and model</h2>
-                <p>Stored in the Newsbrew database.</p>
+                <h2>Filtering, runtime and model</h2>
+                <p>Private settings stored in the Newsbrew database.</p>
               </div>
             </div>
             <form class="settings-form" onSubmit={saveSettings}>
+              <label>
+                General guidance
+                <textarea
+                  maxlength="5000"
+                  rows="8"
+                  placeholder="Describe the kinds of reporting and treatment you generally want or want to avoid."
+                  value={generalGuidance()}
+                  onInput={(event) =>
+                    setGeneralGuidance(event.currentTarget.value)
+                  }
+                />
+                <span>
+                  Natural-language guidance is considered before the topic
+                  signals.
+                </span>
+              </label>
               <label>
                 Poll interval, minutes
                 <input

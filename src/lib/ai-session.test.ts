@@ -13,20 +13,27 @@ import {
 import { filterSystemPrompt } from "./ai/prompts.ts";
 import { parseFilterDecision } from "./ai.ts";
 
-test("filter prompt contains topic signals, preference contrasts, and tri-state labels", () => {
+test("filter prompt contains topic signals, directional guidance, and tri-state labels", () => {
   const prompt = filterSystemPrompt([
-    { topic: "infrastructure", reaction: "like", source: "rating" },
-    { topic: "celebrity gossip", reaction: "dislike", source: "perplexity" },
-  ]);
+    { topic: "preferred subject", reaction: "like", source: "rating" },
+    { topic: "excluded subject", reaction: "dislike", source: "rating" },
+  ], "Prefer evidence-rich reporting over promotional coverage.");
 
-  assert.match(prompt, /Positive topics:\n- infrastructure/);
-  assert.match(prompt, /Negative topics:\n- celebrity gossip/);
-  assert.match(prompt, /Apply these preference contrasts:/);
-  assert.match(prompt, /Judge the central treatment, not keyword presence/);
+  assert.match(
+    prompt,
+    /General guidance:\nPrefer evidence-rich reporting over promotional coverage\./,
+  );
+  assert.match(prompt, /Positive topics:\n- preferred subject/);
+  assert.match(prompt, /Negative topics:\n- excluded subject/);
+  assert.match(prompt, /Treat topic signals as directional/);
+  assert.match(prompt, /incidental positive topic/);
   assert.match(prompt, /YES = clearly wanted/);
   assert.match(prompt, /NO = explicit rejection/);
   assert.match(prompt, /MAYBE = neutral, ambiguous/);
   assert.doesNotMatch(prompt, /score|rubric|recent feedback/i);
+  assert.ok(
+    prompt.indexOf("General guidance:") < prompt.indexOf("Positive topics:"),
+  );
 });
 
 test("accepts only exact tri-state filter answers", () => {
