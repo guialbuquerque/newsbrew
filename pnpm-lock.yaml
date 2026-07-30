@@ -50,6 +50,9 @@ importers:
       lucide-solid:
         specifier: ^0.468.0
         version: 0.468.0(solid-js@1.9.11)
+      markdown-to-jsx:
+        specifier: ^9.9.0
+        version: 9.9.0(solid-js@1.9.11)
       nitro:
         specifier: ^3.0.260610-beta
         version: 3.0.260610-beta(vite@8.1.4(@types/node@24.13.3)(esbuild@0.27.7))
@@ -1269,6 +1272,24 @@ packages:
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
+
+  markdown-to-jsx@9.9.0:
+    resolution: {integrity: sha512-3YRQuriODgdMr9EeY//Ya/104p978bY0nOwmc85IGxHixqOlhNDgq7IJTsLOdmFxjMFKJ6bVzUav30wWVJZOJQ==}
+    engines: {node: '>= 18'}
+    peerDependencies:
+      react: '>= 16.0.0'
+      react-native: '*'
+      solid-js: '>=1.0.0'
+      vue: '>=3.0.0'
+    peerDependenciesMeta:
+      react:
+        optional: true
+      react-native:
+        optional: true
+      solid-js:
+        optional: true
+      vue:
+        optional: true
 
   mdast-util-to-hast@13.2.1:
     resolution: {integrity: sha512-cctsq2wp5vTsLIcaymblUriiTcZd0CwWtCbLvrOzYCDZoWyMNV8sZ7krj09FSnsiJi3WVsHLM4k6Dq/yaPyCXA==}
@@ -2769,6 +2790,10 @@ snapshots:
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  markdown-to-jsx@9.9.0(solid-js@1.9.11):
+    optionalDependencies:
+      solid-js: 1.9.11
 
   mdast-util-to-hast@13.2.1:
     dependencies:

@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-solid";
 import { dequal } from "dequal";
+import Markdown, { type SolidOptions } from "markdown-to-jsx/solid";
 import {
   For,
   Show,
@@ -42,7 +43,23 @@ import type {
   RefreshProgress,
   TopicRating,
 } from "~/lib/types";
+import "~/dialog.css";
+import "~/rating.css";
 import "~/settings.css";
+
+const articleMarkdownOptions: SolidOptions = {
+  disableParsingRawHTML: true,
+  forceBlock: true,
+  forceWrapper: true,
+  overrides: {
+    a: {
+      props: {
+        rel: "noreferrer",
+        target: "_blank",
+      },
+    },
+  },
+};
 
 function formatWhen(value?: string) {
   if (!value) return "Not run yet";
@@ -64,7 +81,8 @@ function progressMessage(progress: RefreshProgress) {
     return `${progress.sources.completed}/${progress.sources.total} sources downloaded`;
   }
   if (progress.phase === "filtering") {
-    return `${progress.filters.completed}/${progress.filters.total} articles filtered · ${progress.filters.accepted} accepted · ${progress.filters.maybe} maybe`;
+    const kept = progress.filters.accepted + progress.filters.maybe;
+    return `${progress.filters.completed}/${progress.filters.total} articles filtered · ${kept} kept`;
   }
   if (progress.phase === "analysing") {
     return `${progress.analyses.completed}/${progress.analyses.total} articles analysed · ${progress.analyses.stored} added · ${progress.analyses.skipped} skipped`;
@@ -112,6 +130,7 @@ function ArticleImage(props: { article: Article }) {
 
 export default function Home() {
   let settingsDialog: HTMLDialogElement | undefined;
+  let ratingDialog: HTMLDialogElement | undefined;
   let revealAnimationFrame: number | undefined;
   let noticeEnterFrame: number | undefined;
   let noticeEnterSecondFrame: number | undefined;
@@ -205,6 +224,9 @@ export default function Home() {
       state()?.topicPreferences.filter(
         (topic) => topic.reaction === "dislike",
       ) ?? [],
+  );
+  const ratingArticle = createMemo(() =>
+    state()?.articles.find((article) => article.id === ratingArticleId()),
   );
 
   function mergeArticles(current: Article[], incoming: Article[]) {
@@ -598,11 +620,25 @@ export default function Home() {
   }
 
   function toggleExpanded(id: string) {
+    if (expandedIds().includes(id) && ratingArticleId() === id) {
+      setRatingArticleId();
+    }
     setExpandedIds((ids) =>
       ids.includes(id)
         ? ids.filter((candidate) => candidate !== id)
         : [...ids, id],
     );
+  }
+
+  function handleArticleClick(event: MouseEvent, id: string) {
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest("button, a, input, select, textarea, label")
+    ) {
+      return;
+    }
+    toggleExpanded(id);
   }
 
   async function refresh() {
@@ -644,10 +680,6 @@ export default function Home() {
   }
 
   function openRating(article: Article) {
-    if (ratingArticleId() === article.id) {
-      setRatingArticleId();
-      return;
-    }
     const existing = new Map(
       article.topicRatings.map((item) => [
         item.topic.toLocaleLowerCase("en-GB"),
@@ -664,6 +696,7 @@ export default function Home() {
       ),
     );
     setRatingArticleId(article.id);
+    if (!ratingDialog?.open) ratingDialog?.showModal();
   }
 
   function toggleRating(topic: string, reaction: Reaction) {
@@ -687,6 +720,7 @@ export default function Home() {
       });
       if (!response.ok) throw new Error("Could not save topic ratings");
       await load();
+      ratingDialog?.close();
       setRatingArticleId();
       setNotice(
         ratings.length === 0
@@ -794,20 +828,12 @@ export default function Home() {
 
   function RatingPanel(props: { article: Article }) {
     return (
-      <div class="rating-panel">
+      <div class="rating-panel" onClick={(event) => event.stopPropagation()}>
         <div class="rating-heading">
           <div>
             <strong>Rate the topics, not the whole story</strong>
             <p>Leave either toggle off when the topic did not affect your view.</p>
           </div>
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label="Close topic rating"
-            onClick={() => setRatingArticleId()}
-          >
-            <X size={16} />
-          </Button>
         </div>
         <div class="rating-table" role="table" aria-label="Topic ratings">
           <div class="rating-row rating-header" role="row">
@@ -900,39 +926,36 @@ export default function Home() {
         </div>
       </Show>
       <header class="topbar">
-        <a href="/" class="brand" aria-label="Newsbrew home">
-          <span class="brand-mark"><Newspaper size={17} /></span>
-          <span>NEWSBREW</span>
-        </a>
-        <div class="header-actions">
-          <Show when={state()}>
-            {(loaded) => (
-              <span class="model-chip">
-                <span class="status-dot" />
-                {loaded().llm.model}
-              </span>
-            )}
-          </Show>
-          <Button
-            variant="outline"
-            size="sm"
-            aria-haspopup="dialog"
-            aria-controls="settings-dialog"
-            onClick={() => settingsDialog?.showModal()}
-          >
-            <Cog size={14} /> Settings
-          </Button>
-          <Button
-            variant="accent"
-            size="sm"
-            disabled={refreshing()}
-            onClick={refresh}
-          >
-            <Show when={refreshing()} fallback={<RefreshCw size={14} />}>
-              <LoaderCircle class="animate-spin" size={14} />
-            </Show>
-            {refreshing() ? "Reading…" : "Refresh digest"}
-          </Button>
+        <div class="topbar-inner">
+          <a href="/" class="brand" aria-label="Newsbrew home">
+            <span class="brand-mark"><Newspaper size={17} /></span>
+            <span>NEWSBREW</span>
+          </a>
+          <div class="header-actions">
+            <Button
+              variant="accent"
+              size="icon"
+              aria-label={refreshing() ? "Refreshing digest" : "Refresh digest"}
+              title={refreshing() ? "Refreshing digest" : "Refresh digest"}
+              disabled={refreshing()}
+              onClick={refresh}
+            >
+              <Show when={refreshing()} fallback={<RefreshCw size={15} />}>
+                <LoaderCircle class="animate-spin" size={15} />
+              </Show>
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Open settings"
+              title="Settings"
+              aria-haspopup="dialog"
+              aria-controls="settings-dialog"
+              onClick={() => settingsDialog?.showModal()}
+            >
+              <Cog size={15} />
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -1048,85 +1071,105 @@ export default function Home() {
                               Open <ExternalLink size={13} />
                             </a>
                           </div>
-                          <Show when={ratingArticleId() === article.id}>
-                            <RatingPanel article={article} />
-                          </Show>
                         </Card>
                       }
                     >
                       <Card
                         data-feed-article={article.id}
-                        class={
-                          article.filterDecision === "maybe"
-                            ? "article-card maybe-article"
-                            : "article-card"
+                        class="article-card"
+                        onClick={(event) =>
+                          handleArticleClick(event, article.id)
                         }
                       >
-                        <ArticleImage article={article} />
-                        <div class="article-body">
-                          <div class="article-meta">
-                            <span>{article.sourceName}</span>
-                            <span class="meta-separator">•</span>
-                            <span>{formatWhen(article.publishedAt ?? article.discoveredAt)}</span>
-                            <Show when={article.filterDecision === "maybe"}>
-                              <span class="maybe-label">Maybe</span>
-                            </Show>
-                          </div>
+                        <header class="article-header">
                           <h2 class="article-headline">{article.headline}</h2>
-                          <p class="byline">{article.byline}</p>
-                          <p class="article-summary">{article.summary}</p>
+                          <p class="article-meta">
+                            <span>
+                              {formatWhen(
+                                article.publishedAt ?? article.discoveredAt,
+                              )}
+                            </span>
+                            <span class="meta-separator">•</span>
+                            <span>{article.sourceName}</span>
+                            <Show when={article.byline}>
+                              <span class="meta-separator">•</span>
+                              <span>{article.byline}</span>
+                            </Show>
+                          </p>
+                        </header>
 
-                          <div class="article-actions">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              aria-expanded={isExpanded(article.id)}
-                              onClick={() => toggleExpanded(article.id)}
-                            >
-                              {isExpanded(article.id) ? "See less" : "See more"}
-                              <Show
-                                when={isExpanded(article.id)}
-                                fallback={<ChevronDown size={14} />}
+                        <div class="article-main">
+                          <ArticleImage article={article} />
+                          <div class="article-summary-cell">
+                            <p class="article-summary">{article.summary}</p>
+                            <div class="summary-actions">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                aria-label={
+                                  isExpanded(article.id)
+                                    ? "Show less"
+                                    : "Show more"
+                                }
+                                title={
+                                  isExpanded(article.id)
+                                    ? "Show less"
+                                    : "Show more"
+                                }
+                                aria-expanded={isExpanded(article.id)}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleExpanded(article.id);
+                                }}
                               >
-                                <ChevronUp size={14} />
-                              </Show>
-                            </Button>
-                            <a
-                              class="open-link"
-                              href={article.url}
-                              target="_blank"
-                              rel="noreferrer"
+                                <Show
+                                  when={isExpanded(article.id)}
+                                  fallback={<ChevronDown size={16} />}
+                                >
+                                  <ChevronUp size={16} />
+                                </Show>
+                              </Button>
+                              <a
+                                class="open-link"
+                                href={article.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                aria-label={`Open ${article.headline}`}
+                                title="Open article"
+                              >
+                                <ExternalLink size={15} />
+                              </a>
+                            </div>
+                          </div>
+                        </div>
+
+                        <Show when={isExpanded(article.id)}>
+                          <div class="article-details">
+                            <Markdown
+                              class="points-markdown"
+                              options={articleMarkdownOptions}
                             >
-                              Open <ExternalLink size={14} />
-                            </a>
+                              {article.pointsMarkdown}
+                            </Markdown>
                             <Button
                               class="rate-button"
-                              size="sm"
+                              size="icon"
                               variant={
-                                article.topicRatings.length > 0 ? "accent" : "outline"
+                                article.topicRatings.length > 0
+                                  ? "accent"
+                                  : "outline"
                               }
-                              onClick={() => openRating(article)}
+                              aria-label={`Rate topics in ${article.headline}`}
+                              title="Rate topics"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openRating(article);
+                              }}
                             >
-                              Rate
+                              <SlidersHorizontal size={15} />
                             </Button>
                           </div>
-
-                          <Show when={isExpanded(article.id)}>
-                            <div class="article-details">
-                              <div class="points-markdown">
-                                {article.pointsMarkdown}
-                              </div>
-                              <div class="topic-list">
-                                <For each={article.topics}>
-                                  {(topic) => <Badge>{topic}</Badge>}
-                                </For>
-                              </div>
-                            </div>
-                          </Show>
-                          <Show when={ratingArticleId() === article.id}>
-                            <RatingPanel article={article} />
-                          </Show>
-                        </div>
+                        </Show>
                       </Card>
                     </Show>
                   )}
@@ -1149,16 +1192,50 @@ export default function Home() {
         </section>
 
         <dialog
+          ref={ratingDialog}
+          id="rating-dialog"
+          class="app-dialog rating-dialog"
+          closedby="any"
+          aria-labelledby="rating-title"
+          aria-describedby="rating-description"
+          onClose={() => setRatingArticleId()}
+        >
+          <header class="dialog-header">
+            <div>
+              <span class="dialog-eyebrow">NEWSBREW</span>
+              <h1 id="rating-title">Rate topics</h1>
+              <p id="rating-description">
+                {ratingArticle()?.headline ?? "Choose the signals this story carries."}
+              </p>
+            </div>
+            <Button
+              autofocus
+              variant="ghost"
+              size="icon"
+              aria-label="Close topic rating"
+              onClick={() => ratingDialog?.close()}
+            >
+              <X size={18} />
+            </Button>
+          </header>
+          <div class="rating-modal-body">
+            <Show when={ratingArticle()}>
+              {(article) => <RatingPanel article={article()} />}
+            </Show>
+          </div>
+        </dialog>
+
+        <dialog
           ref={settingsDialog}
           id="settings-dialog"
-          class="settings-modal"
+          class="app-dialog settings-dialog"
           closedby="any"
           aria-labelledby="settings-title"
           aria-describedby="settings-description"
         >
-              <header class="settings-modal-header">
+              <header class="dialog-header">
                 <div>
-                  <span class="settings-eyebrow">NEWSBREW</span>
+                  <span class="dialog-eyebrow">NEWSBREW</span>
                   <h1 id="settings-title">Settings</h1>
                   <p id="settings-description">
                     Tune your sources, filtering, model and private access.

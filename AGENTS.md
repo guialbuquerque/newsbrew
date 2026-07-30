@@ -20,6 +20,7 @@
   survive a later stop or failure.
 - Store tests must set `NEWSBREW_CONFIG_JSON` to a temporary database before importing `store.ts`. Never let tests open `~/.config/wes-dev/newsbrew/news.sqlite`, and check the live database for exact fixture contamination if isolation fails.
 - Before explaining a missing or changed file, inspect staged changes, unstaged changes, untracked files, and relevant Git stashes. Do not attribute it to concurrent work without evidence.
+- Never add hover effects unless the element is directly interactive, such as a button or link.
 - Treat SQLite data, settings exports, tuning JSONL, benchmark configs,
   reference sets, reports, and server logs as sensitive local artifacts. Keep
   benchmark artifacts under `~/.config/wes-dev/newsbrew/benchmark-*`; never
