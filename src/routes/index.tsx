@@ -112,6 +112,9 @@ function ArticleImage(props: { article: Article }) {
 export default function Home() {
   let settingsDialog: HTMLDialogElement | undefined;
   let revealAnimationFrame: number | undefined;
+  let noticeEnterFrame: number | undefined;
+  let noticeEnterSecondFrame: number | undefined;
+  let noticeExitTimer: ReturnType<typeof setTimeout> | undefined;
   const [state, setState] = createSignal<DashboardState>();
   const [auth, setAuth] = createSignal<AuthStatus>();
   const [authLoading, setAuthLoading] = createSignal(true);
@@ -124,7 +127,8 @@ export default function Home() {
   const [refreshProgress, setRefreshProgress] =
     createSignal<RefreshProgress>();
   const [savingRating, setSavingRating] = createSignal(false);
-  const [notice, setNotice] = createSignal("");
+  const [notice, setNoticeValue] = createSignal("");
+  const [noticeVisible, setNoticeVisible] = createSignal(false);
   const [expandedIds, setExpandedIds] = createSignal<string[]>([]);
   const [ratingArticleId, setRatingArticleId] = createSignal<string>();
   const [draftRatings, setDraftRatings] = createSignal<
@@ -142,6 +146,53 @@ export default function Home() {
   const [generalGuidance, setGeneralGuidance] = createSignal("");
   const [accessTokenAttempt, setAccessTokenAttempt] = createSignal("");
   const [accessTokenDraft, setAccessTokenDraft] = createSignal("");
+
+  function cancelNoticeEntry() {
+    if (noticeEnterFrame !== undefined) {
+      cancelAnimationFrame(noticeEnterFrame);
+      noticeEnterFrame = undefined;
+    }
+    if (noticeEnterSecondFrame !== undefined) {
+      cancelAnimationFrame(noticeEnterSecondFrame);
+      noticeEnterSecondFrame = undefined;
+    }
+  }
+
+  function showNotice(message: string) {
+    if (noticeExitTimer) {
+      clearTimeout(noticeExitTimer);
+      noticeExitTimer = undefined;
+    }
+    const shouldEnter = !notice() || !noticeVisible();
+    setNoticeValue(message);
+    if (!shouldEnter) return;
+
+    cancelNoticeEntry();
+    setNoticeVisible(false);
+    noticeEnterFrame = requestAnimationFrame(() => {
+      noticeEnterFrame = undefined;
+      noticeEnterSecondFrame = requestAnimationFrame(() => {
+        noticeEnterSecondFrame = undefined;
+        setNoticeVisible(true);
+      });
+    });
+  }
+
+  function dismissNotice() {
+    if (!notice()) return;
+    cancelNoticeEntry();
+    setNoticeVisible(false);
+    if (noticeExitTimer) clearTimeout(noticeExitTimer);
+    noticeExitTimer = setTimeout(() => {
+      noticeExitTimer = undefined;
+      setNoticeValue("");
+    }, 240);
+  }
+
+  function setNotice(message: string) {
+    if (message) showNotice(message);
+    else dismissNotice();
+  }
 
   const likedTopics = createMemo(
     () =>
@@ -235,11 +286,21 @@ export default function Home() {
         top: window.scrollY + heightAdded,
         behavior: "auto",
       });
-      if (wasAtTop && revealNewItemsAtTop) {
-        requestAnimationFrame(() => {
+
+      requestAnimationFrame(() => {
+        const settledArticle = document.querySelector<HTMLElement>(
+          `.article-list > [data-feed-article="${CSS.escape(firstArticleId)}"]`,
+        );
+        if (!settledArticle) return;
+        const residual =
+          settledArticle.getBoundingClientRect().top - firstTop;
+        if (Math.abs(residual) > 0.01) {
+          window.scrollBy({ top: residual, behavior: "auto" });
+        }
+        if (wasAtTop && revealNewItemsAtTop) {
           animateFeedReveal(-Math.min(40, window.scrollY));
-        });
-      }
+        }
+      });
     });
   }
 
@@ -413,6 +474,8 @@ export default function Home() {
     onCleanup(() => {
       stopped = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      cancelNoticeEntry();
+      if (noticeExitTimer) clearTimeout(noticeExitTimer);
       if (revealAnimationFrame !== undefined) {
         cancelAnimationFrame(revealAnimationFrame);
       }
@@ -875,30 +938,49 @@ export default function Home() {
             <div
               classList={{
                 notice: true,
+                "feed-notice": true,
+                "notice-visible": noticeVisible(),
                 "refresh-notice": Boolean(refreshProgress()),
               }}
               style={`--refresh-progress: ${refreshProgress()?.percent ?? 0}%`}
             >
               <div class="notice-status">
-                <Show when={refreshing()}>
-                  <LoaderCircle
-                    class="notice-spinner animate-spin"
-                    aria-hidden="true"
-                    size={14}
-                  />
-                </Show>
-                <span role="status" aria-live="polite">{notice()}</span>
-                <Show when={refreshing()}>
-                  <button
-                    class="stop-refresh"
-                    type="button"
-                    disabled={stopping()}
-                    onClick={stopRefresh}
+                <span class="notice-spinner-slot" aria-hidden="true">
+                  <Show when={refreshing()}>
+                    <LoaderCircle
+                      class="notice-spinner animate-spin"
+                      size={14}
+                    />
+                  </Show>
+                </span>
+                <span class="notice-message" role="status" aria-live="polite">
+                  {notice()}
+                </span>
+                <span class="notice-action-slot">
+                  <Show
+                    when={refreshing()}
+                    fallback={
+                      <button
+                        class="notice-action"
+                        type="button"
+                        onClick={dismissNotice}
+                      >
+                        <X size={12} />
+                        Dismiss
+                      </button>
+                    }
                   >
-                    <X size={12} />
-                    {stopping() ? "Stopping…" : "Stop"}
-                  </button>
-                </Show>
+                    <button
+                      class="notice-action"
+                      type="button"
+                      disabled={stopping()}
+                      onClick={stopRefresh}
+                    >
+                      <X size={12} />
+                      {stopping() ? "Stopping…" : "Stop"}
+                    </button>
+                  </Show>
+                </span>
               </div>
             </div>
           </Show>
