@@ -2,6 +2,9 @@
 
 - Read `ARCHITECTURE.md` before changing the AI, ingestion, refresh, authentication, or storage paths. Read `BENCHMARKING.md` before running or changing model evaluations.
 - Newsbrew is unreleased. Do not add database migration logic, compatibility branches, legacy schema fields, or migration tests.
+- The published package is self-contained under `.output`. Keep
+  `dependencies` empty and add every third-party package to `devDependencies`
+  so consumers never install runtime dependencies alongside the bundle.
 - When the SQLite schema changes, update the canonical `CREATE TABLE` definitions and directly mutate `~/.config/wes-dev/newsbrew/news.sqlite` during the same task. Preserve relevant local data and verify the resulting schema.
 - When database-backed settings or their import/export shape changes, also
   update `~/.config/wes-dev/newsbrew/newsbrew.json` and

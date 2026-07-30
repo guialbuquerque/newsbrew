@@ -19,6 +19,7 @@ import {
   Trash2,
   X,
 } from "lucide-solid";
+import { dequal } from "dequal";
 import {
   For,
   Show,
@@ -206,11 +207,14 @@ export default function Home() {
       ) ?? [],
   );
 
-  function mergeArticles(...groups: Article[][]) {
-    const byId = new Map<string, Article>();
-    for (const group of groups) {
-      for (const article of group) {
-        if (!byId.has(article.id)) byId.set(article.id, article);
+  function mergeArticles(current: Article[], incoming: Article[]) {
+    const byId = new Map(
+      current.map((article) => [article.id, article] as const),
+    );
+    for (const article of incoming) {
+      const existing = byId.get(article.id);
+      if (!existing || !dequal(existing, article)) {
+        byId.set(article.id, article);
       }
     }
     return [...byId.values()].sort(
@@ -325,7 +329,7 @@ export default function Home() {
           () =>
             setState({
               ...next,
-              articles: mergeArticles(next.articles, current.articles),
+              articles: mergeArticles(current.articles, next.articles),
             }),
           hasNewArticles,
         );
@@ -392,7 +396,7 @@ export default function Home() {
       () =>
         setState({
           ...current,
-          articles: mergeArticles([article], current.articles),
+          articles: mergeArticles(current.articles, [article]),
         }),
       true,
     );

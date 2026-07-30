@@ -38,6 +38,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      dequal:
+        specifier: ^2.0.3
+        version: 2.0.3
       fast-xml-parser:
         specifier: ^5.3.6
         version: 5.10.1
