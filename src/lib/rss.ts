@@ -100,7 +100,7 @@ export function parseFeed(xml: string): FeedItem[] {
       return {
         id: stableId(url),
         headline,
-        byline: authorFrom(item) || "Byline not supplied",
+        byline: authorFrom(item),
         url,
         publishedAt:
           parsedDate && !Number.isNaN(parsedDate.valueOf())

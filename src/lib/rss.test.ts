@@ -31,6 +31,17 @@ test("parses Atom links and nested author names", () => {
   assert.equal(items[0]?.byline, "Sam Lee");
 });
 
+test("leaves the byline empty when the feed supplies no author", () => {
+  const items = parseFeed(`
+    <rss><channel><item>
+      <title>Community centre reopens</title>
+      <link>https://example.com/community-centre</link>
+    </item></channel></rss>
+  `);
+
+  assert.equal(items[0]?.byline, "");
+});
+
 test("parses Atom text constructs with attributes and CDATA", () => {
   const items = parseFeed(`
     <feed xmlns="http://www.w3.org/2005/Atom">
