@@ -1,5 +1,5 @@
 {
-  "databaseFile": "./data/news.sqlite",
+  "databaseFile": "~/.config/wes-dev/newsbrew/news.sqlite",
   "runtime": {
     "pollIntervalMinutes": 30,
     "maxItemsPerSource": 8

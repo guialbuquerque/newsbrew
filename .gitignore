@@ -4,7 +4,7 @@
 
 .output/
 node_modules/
-# Runtime state plus private benchmark-* configs, references, and reports.
+# Guard against recreating sensitive runtime state inside the repository.
 data/
 
 *.log

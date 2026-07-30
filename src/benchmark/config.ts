@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { z } from "zod";
+import { newsbrewDataDirectory } from "../lib/paths.ts";
 
 export const benchmarkDecisionSchema = z.enum(["YES", "MAYBE", "NO"]);
 export type BenchmarkDecision = z.infer<typeof benchmarkDecisionSchema>;
@@ -67,7 +68,7 @@ export const benchmarkReferenceSchema = z.object({
 export type BenchmarkReference = z.infer<typeof benchmarkReferenceSchema>;
 export type BenchmarkCandidate = BenchmarkReference["items"][number];
 
-export const benchmarkDataDirectory = resolve("data");
+export const benchmarkDataDirectory = newsbrewDataDirectory;
 export const defaultBenchmarkConfigFile = "benchmark-config.json";
 export const defaultBenchmarkReferenceFile = "benchmark-reference.json";
 export const defaultBenchmarkOutputFile = "benchmark-results.json";

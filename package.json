@@ -1,13 +1,24 @@
 {
   "name": "newsbrew",
   "version": "0.1.0",
-  "private": true,
+  "description": "A private, local-first news aggregator",
+  "private": false,
   "type": "module",
+  "bin": {
+    "newsbrew": "./bin/newsbrew.mjs"
+  },
+  "files": [
+    ".output/",
+    "bin/",
+    "README.md",
+    "ARCHITECTURE.md"
+  ],
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "start": "node .output/server/index.mjs",
+    "start": "node bin/newsbrew.mjs",
     "preview": "vite preview",
+    "prepack": "pnpm build",
     "benchmark": "node --experimental-strip-types src/benchmark/index.ts",
     "check": "tsc --noEmit",
     "ingest": "node --experimental-strip-types src/ingest.ts",
@@ -18,7 +29,8 @@
     "worker": "node --experimental-strip-types src/worker.ts",
     "test": "node --experimental-strip-types --test src/lib/*.test.ts"
   },
-  "dependencies": {
+  "dependencies": {},
+  "devDependencies": {
     "@mozilla/readability": "^0.6.0",
     "@solidjs/router": "^0.16.2",
     "@solidjs/start": "^2.0.0-beta.0",
@@ -33,9 +45,7 @@
     "tailwind-merge": "^3.3.1",
     "vite": "^8.0.0",
     "nitro": "^3.0.260610-beta",
-    "zod": "^4.2.1"
-  },
-  "devDependencies": {
+    "zod": "^4.2.1",
     "@tailwindcss/vite": "^4.0.7",
     "@types/node": "^24.0.0",
     "@types/mozilla-readability": "^0.2.0",

@@ -1,7 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { dirname } from "node:path";
 import { z } from "zod";
+import {
+  defaultConfigFile,
+  defaultDatabaseFile,
+  resolveUserPath,
+} from "./paths.ts";
 
 const positiveNumber = z.number().finite().positive();
 
@@ -51,9 +56,9 @@ export type ImportedConfig = z.infer<typeof importedConfigSchema>;
 function readImportedConfig() {
   const inline = process.env.NEWSBREW_CONFIG_JSON?.trim();
   const configuredFile = process.env.NEWSBREW_CONFIG_FILE?.trim();
-  const defaultFile = resolve("newsbrew.json");
+  const defaultFile = defaultConfigFile;
   const filename = configuredFile
-    ? resolve(configuredFile)
+    ? resolveUserPath(configuredFile)
     : existsSync(defaultFile)
       ? defaultFile
       : undefined;
@@ -101,6 +106,17 @@ export type RuntimeConfig = {
   databaseFile: string;
 };
 
+function configuredDatabaseFile() {
+  const databaseFile = importedConfig.value?.databaseFile;
+  if (!databaseFile) return defaultDatabaseFile;
+
+  const sourceDirectory =
+    importedConfig.source && importedConfig.source !== "NEWSBREW_CONFIG_JSON"
+      ? dirname(importedConfig.source)
+      : process.cwd();
+  return resolveUserPath(databaseFile, sourceDirectory);
+}
+
 export const config: RuntimeConfig = {
   lmStudioBaseURL: importedConfig.value?.llm?.baseURL ?? "",
   lmStudioModel: importedConfig.value?.llm?.model ?? "",
@@ -111,9 +127,7 @@ export const config: RuntimeConfig = {
     importedConfig.value?.runtime?.pollIntervalMinutes ?? 30,
   maxItemsPerSource:
     importedConfig.value?.runtime?.maxItemsPerSource ?? 8,
-  databaseFile: resolve(
-    importedConfig.value?.databaseFile ?? "./data/news.sqlite",
-  ),
+  databaseFile: configuredDatabaseFile(),
 };
 
 export function applyRuntimeConfig(next: Partial<RuntimeConfig>) {

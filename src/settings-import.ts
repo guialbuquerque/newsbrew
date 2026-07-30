@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolveUserPath } from "./lib/paths.ts";
 
 const filename = process.argv.slice(2).find((argument) => !argument.startsWith("-"));
 if (!filename) {
@@ -8,7 +8,7 @@ if (!filename) {
   );
 }
 
-const absoluteFilename = resolve(filename);
+const absoluteFilename = resolveUserPath(filename);
 if (!existsSync(absoluteFilename)) {
   throw new Error(`Settings file does not exist: ${absoluteFilename}`);
 }
@@ -17,7 +17,7 @@ delete process.env.NEWSBREW_CONFIG_JSON;
 process.env.NEWSBREW_CONFIG_FILE = absoluteFilename;
 process.env.NEWSBREW_SETTINGS_IMPORT_MODE = "explicit";
 
-const [{ importedConfig }, store] = await Promise.all([
+const [{ config, importedConfig }, store] = await Promise.all([
   import("./lib/config.ts"),
   import("./lib/store.ts"),
 ]);
@@ -35,7 +35,7 @@ process.stdout.write(
   `${JSON.stringify({
     imported: result.imported,
     source: result.source,
-    databaseFile: importedConfig.value.databaseFile ?? "./data/news.sqlite",
+    databaseFile: config.databaseFile,
     sources: state.sources.length,
     likedTopics: state.topicPreferences.filter(
       (topic) => topic.reaction === "like",

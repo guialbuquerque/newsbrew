@@ -11,19 +11,21 @@ The benchmark implementation lives in `src/benchmark/` and runs with:
 pnpm benchmark
 ```
 
-It reads and writes only ignored files under `data/`, all prefixed with
-`benchmark-`:
+It reads and writes only private files under
+`~/.config/wes-dev/newsbrew/`, all prefixed with `benchmark-`:
 
-- `data/benchmark-config.json` contains the LM Studio connection, general
-  guidance, reader topic preferences, and run controls.
-- `data/benchmark-reference.json` contains private labeled candidates.
-- `data/benchmark-results.json` is the atomic checkpoint and final report.
+- `~/.config/wes-dev/newsbrew/benchmark-config.json` contains the LM Studio
+  connection, general guidance, reader topic preferences, and run controls.
+- `~/.config/wes-dev/newsbrew/benchmark-reference.json` contains private
+  labeled candidates.
+- `~/.config/wes-dev/newsbrew/benchmark-results.json` is the atomic checkpoint
+  and final report.
 
 The `--config`, `--reference`, and `--output` options accept a filename only,
-require the `benchmark-` prefix, and keep the file inside `data/`. Use
-`--model=TEXT`, `--limit=N`, or `--show-misses` for narrower runs. The command
-does not start LM Studio or download models, and it unloads only model
-instances created during its own run.
+require the `benchmark-` prefix, and keep the file inside the Newsbrew config
+directory. Use `--model=TEXT`, `--limit=N`, or `--show-misses` for narrower
+runs. The command does not start LM Studio or download models, and it unloads
+only model instances created during its own run.
 
 The initial ignored reference file was recovered from a legacy selection
 exercise. Its selected items are labeled `YES`; unselected items are

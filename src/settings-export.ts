@@ -6,12 +6,14 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, relative } from "node:path";
+import { defaultConfigFile, resolveUserPath } from "./lib/paths.ts";
 
 const requestedFilename =
-  process.argv.slice(2).find((argument) => !argument.startsWith("-")) ??
-  "./newsbrew.json";
-const outputFilename = resolve(requestedFilename);
+  process.argv.slice(2).find((argument) => !argument.startsWith("-"));
+const outputFilename = requestedFilename
+  ? resolveUserPath(requestedFilename)
+  : defaultConfigFile;
 
 process.env.NEWSBREW_SETTINGS_IMPORT_MODE = "explicit";
 
@@ -21,7 +23,7 @@ const [{ config, importedConfigSchema }, store] = await Promise.all([
 ]);
 
 function portableDatabaseFile() {
-  const relativePath = relative(process.cwd(), config.databaseFile);
+  const relativePath = relative(dirname(outputFilename), config.databaseFile);
   if (!relativePath || relativePath.startsWith("..")) return config.databaseFile;
   return relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
 }

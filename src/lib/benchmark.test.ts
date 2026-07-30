@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   benchmarkDataPath,
@@ -9,10 +11,16 @@ import {
   type BenchmarkDecisionResult,
 } from "../benchmark/metrics.ts";
 
-test("benchmark data paths cannot escape data or omit the prefix", () => {
-  assert.match(
+test("benchmark data paths cannot escape the config directory or omit the prefix", () => {
+  assert.equal(
     benchmarkDataPath("benchmark-results.json"),
-    /data\/benchmark-results\.json$/,
+    join(
+      homedir(),
+      ".config",
+      "wes-dev",
+      "newsbrew",
+      "benchmark-results.json",
+    ),
   );
   assert.throws(() => benchmarkDataPath("../benchmark-results.json"));
   assert.throws(() => benchmarkDataPath("results.json"));

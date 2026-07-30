@@ -84,6 +84,12 @@ abstraction. The project is unreleased, so schema changes update the canonical
 table definitions and the local database directly rather than adding runtime
 migrations.
 
+Persistent local state is independent of the install or working directory.
+The default database, settings snapshot, and private benchmark artifacts live
+under `~/.config/wes-dev/newsbrew/`. Relative `databaseFile` values in a
+settings file resolve from that settings file's directory; inline settings
+continue to resolve relative paths from the current working directory.
+
 `filter_results` stores the exact auditable classifier inputs:
 
 - URL
@@ -116,9 +122,9 @@ dislikes hides the article; otherwise the article remains visible.
 
 ## Configuration and authentication
 
-SQLite is the runtime source of truth, including filter guidance.
-`newsbrew.json`,
-`NEWSBREW_CONFIG_FILE`, and `NEWSBREW_CONFIG_JSON` are bootstrap/import paths.
+SQLite is the runtime source of truth, including filter guidance. The default
+`~/.config/wes-dev/newsbrew/newsbrew.json`, `NEWSBREW_CONFIG_FILE`, and
+`NEWSBREW_CONFIG_JSON` are bootstrap/import paths.
 The worker reloads database-backed runtime settings between polling runs.
 
 A blank access token disables authentication. A configured token is stored as

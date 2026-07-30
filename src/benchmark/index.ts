@@ -2,7 +2,6 @@
 
 import { createHash } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
-import { basename } from "node:path";
 import { filterSystemPrompt } from "../lib/ai/prompts.ts";
 import type { TopicPreference } from "../lib/types.ts";
 import {
@@ -72,21 +71,21 @@ function printHelp() {
   pnpm benchmark [options]
 
 Options:
-  --config=benchmark-NAME.json     Private config in data/
-  --reference=benchmark-NAME.json  Private reference set in data/
-  --output=benchmark-NAME.json     Private report in data/
+  --config=benchmark-NAME.json     Private config in the Newsbrew data directory
+  --reference=benchmark-NAME.json  Private reference set in the data directory
+  --output=benchmark-NAME.json     Private report in the data directory
   --model=TEXT                     Test only matching local model names
   --limit=N                        Use the first N shuffled reference items
   --show-misses                    Print misclassified item IDs and headlines
   --help                           Show this help
 
 Defaults:
-  data/${defaultBenchmarkConfigFile}
-  data/${defaultBenchmarkReferenceFile}
-  data/${defaultBenchmarkOutputFile}
+  ~/.config/wes-dev/newsbrew/${defaultBenchmarkConfigFile}
+  ~/.config/wes-dev/newsbrew/${defaultBenchmarkReferenceFile}
+  ~/.config/wes-dev/newsbrew/${defaultBenchmarkOutputFile}
 
-All benchmark files must stay in data/ and begin with benchmark-. The command
-does not start LM Studio or download models.`);
+All benchmark files must stay in the Newsbrew data directory and begin with
+benchmark-. The command does not start LM Studio or download models.`);
 }
 
 function serverRoot(baseURL: string) {
@@ -582,7 +581,7 @@ async function main() {
     "Inference: production tri-state prompt, sequential stateful chain, context-aware rollover",
   );
   console.log(
-    `Reasoning modes: ${config.run.reasoningModes.join(", ")}; output: data/${basename(outputPath)}`,
+    `Reasoning modes: ${config.run.reasoningModes.join(", ")}; output: ${outputPath}`,
   );
   console.log(
     "The command will not start LM Studio and unloads only model instances it creates.\n",
@@ -780,7 +779,7 @@ async function main() {
       }
     }
   }
-  console.log(`\nComplete private report: data/${basename(outputPath)}`);
+  console.log(`\nComplete private report: ${outputPath}`);
 }
 
 main().catch((error) => {
