@@ -108,6 +108,7 @@ function ArticleImage(props: { article: Article }) {
 }
 
 export default function Home() {
+  let settingsDialog: HTMLDialogElement | undefined;
   const [state, setState] = createSignal<DashboardState>();
   const [auth, setAuth] = createSignal<AuthStatus>();
   const [authLoading, setAuthLoading] = createSignal(true);
@@ -118,7 +119,6 @@ export default function Home() {
   const [refreshProgress, setRefreshProgress] =
     createSignal<RefreshProgress>();
   const [savingRating, setSavingRating] = createSignal(false);
-  const [panelOpen, setPanelOpen] = createSignal(false);
   const [notice, setNotice] = createSignal("");
   const [expandedIds, setExpandedIds] = createSignal<string[]>([]);
   const [ratingArticleId, setRatingArticleId] = createSignal<string>();
@@ -660,7 +660,9 @@ export default function Home() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setPanelOpen(true)}
+            aria-haspopup="dialog"
+            aria-controls="settings-dialog"
+            onClick={() => settingsDialog?.showModal()}
           >
             <Cog size={14} /> Settings
           </Button>
@@ -855,26 +857,35 @@ export default function Home() {
           </Show>
         </section>
 
-        <aside
-          classList={{
-            "control-panel": true,
-            "settings-drawer": true,
-            open: panelOpen(),
-          }}
+        <dialog
+          ref={settingsDialog}
+          id="settings-dialog"
+          class="settings-modal"
+          closedby="any"
+          aria-labelledby="settings-title"
+          aria-describedby="settings-description"
         >
-          <div class="mobile-panel-head">
-            <strong>Settings</strong>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Close settings"
-              onClick={() => setPanelOpen(false)}
-            >
-              <X size={18} />
-            </Button>
-          </div>
+              <header class="settings-modal-header">
+                <div>
+                  <span class="settings-eyebrow">NEWSBREW</span>
+                  <h1 id="settings-title">Settings</h1>
+                  <p id="settings-description">
+                    Tune your sources, filtering, model and private access.
+                  </p>
+                </div>
+                <Button
+                  autofocus
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Close settings"
+                  onClick={() => settingsDialog?.close()}
+                >
+                  <X size={18} />
+                </Button>
+              </header>
 
-          <section class="panel-section">
+              <div class="settings-modal-body">
+          <section class="panel-section settings-topic-section">
             <div class="panel-heading">
               <span class="panel-icon"><SlidersHorizontal size={15} /></span>
               <div>
@@ -1010,7 +1021,7 @@ export default function Home() {
             </form>
           </section>
 
-          <section class="panel-section">
+          <section class="panel-section settings-runtime">
             <div class="panel-heading">
               <span class="panel-icon"><Cog size={15} /></span>
               <div>
@@ -1151,16 +1162,9 @@ export default function Home() {
               </Button>
             </Show>
           </section>
-        </aside>
+              </div>
+        </dialog>
       </main>
-
-      <Show when={panelOpen()}>
-        <button
-          class="panel-backdrop"
-          aria-label="Close settings"
-          onClick={() => setPanelOpen(false)}
-        />
-      </Show>
     </div>
   );
 }
