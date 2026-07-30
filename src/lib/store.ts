@@ -15,6 +15,8 @@ import {
 import type {
   AppState,
   Article,
+  ArticleCursor,
+  ArticlePage,
   FilterResult,
   Reaction,
   Source,
@@ -424,7 +426,12 @@ if (process.env.NEWSBREW_SETTINGS_IMPORT_MODE !== "explicit") {
 }
 hydrateRuntimeConfig();
 
-export async function readState(): Promise<AppState> {
+export async function readState(
+  options: {
+    includeArticles?: boolean;
+    includeSeen?: boolean;
+  } = {},
+): Promise<AppState> {
   const sources = database
     .prepare(`
       SELECT id, name, url, enabled, last_fetched_at AS lastFetchedAt,
@@ -437,8 +444,11 @@ export async function readState(): Promise<AppState> {
       enabled: Boolean((row as { enabled: number }).enabled),
     }));
 
-  const articleRows = database
-    .prepare(`
+  const articleRows =
+    options.includeArticles === false
+      ? []
+      : (database
+          .prepare(`
       SELECT id, source_id AS sourceId, source_name AS sourceName, url,
         headline, byline, published_at AS publishedAt,
         discovered_at AS discoveredAt, summary,
@@ -448,26 +458,32 @@ export async function readState(): Promise<AppState> {
         hidden, skip_reason AS skipReason
       FROM articles
       WHERE skip_reason IS NULL
-      ORDER BY discovered_at DESC LIMIT 250
+      ORDER BY discovered_at DESC, id DESC LIMIT 250
     `)
-    .all() as Array<
-    Omit<Article, "topics" | "topicRatings" | "hidden"> & {
-      hidden: number;
-    }
-  >;
+          .all() as ArticleRow[]);
 
-  const topics = database
-    .prepare(`
+  const topics =
+    articleRows.length === 0
+      ? []
+      : (database
+          .prepare(`
       SELECT article_id AS articleId, topic
       FROM article_topics ORDER BY article_id, position
     `)
-    .all() as Array<{ articleId: string; topic: string }>;
-  const ratings = database
-    .prepare(`
+          .all() as Array<{ articleId: string; topic: string }>);
+  const ratings =
+    articleRows.length === 0
+      ? []
+      : (database
+          .prepare(`
       SELECT article_id AS articleId, topic, reaction
       FROM article_topic_ratings ORDER BY article_id, created_at
     `)
-    .all() as Array<{ articleId: string; topic: string; reaction: Reaction }>;
+          .all() as Array<{
+          articleId: string;
+          topic: string;
+          reaction: Reaction;
+        }>);
 
   const topicsByArticle = new Map<string, string[]>();
   for (const row of topics) {
@@ -500,17 +516,23 @@ export async function readState(): Promise<AppState> {
     `)
     .all() as TopicPreference[];
 
-  const recentSeen = database
-    .prepare(`
+  const recentSeen =
+    options.includeSeen === false
+      ? []
+      : database
+          .prepare(`
       SELECT article_id AS articleId
       FROM seen_articles ORDER BY seen_at DESC LIMIT 2000
     `)
-    .all()
-    .map((row) => String((row as { articleId: string }).articleId));
-  const skippedArticleIds = database
-    .prepare("SELECT id FROM articles WHERE skip_reason IS NOT NULL")
-    .all()
-    .map((row) => String((row as { id: string }).id));
+          .all()
+          .map((row) => String((row as { articleId: string }).articleId));
+  const skippedArticleIds =
+    options.includeSeen === false
+      ? []
+      : database
+          .prepare("SELECT id FROM articles WHERE skip_reason IS NOT NULL")
+          .all()
+          .map((row) => String((row as { id: string }).id));
   const seen = [...new Set([...recentSeen, ...skippedArticleIds])];
 
   const metadata = Object.fromEntries(
@@ -531,14 +553,112 @@ export async function readState(): Promise<AppState> {
   };
 }
 
+type ArticleRow = Omit<Article, "topics" | "topicRatings" | "hidden"> & {
+  hidden: number;
+};
+
+function hydrateArticleRows(articleRows: ArticleRow[]) {
+  if (articleRows.length === 0) return [];
+  const placeholders = articleRows.map(() => "?").join(", ");
+  const articleIds = articleRows.map((row) => row.id);
+  const topics = database
+    .prepare(`
+      SELECT article_id AS articleId, topic
+      FROM article_topics
+      WHERE article_id IN (${placeholders})
+      ORDER BY article_id, position
+    `)
+    .all(...articleIds) as Array<{ articleId: string; topic: string }>;
+  const ratings = database
+    .prepare(`
+      SELECT article_id AS articleId, topic, reaction
+      FROM article_topic_ratings
+      WHERE article_id IN (${placeholders})
+      ORDER BY article_id, created_at
+    `)
+    .all(...articleIds) as Array<{
+    articleId: string;
+    topic: string;
+    reaction: Reaction;
+  }>;
+  const topicsByArticle = new Map<string, string[]>();
+  for (const row of topics) {
+    topicsByArticle.set(row.articleId, [
+      ...(topicsByArticle.get(row.articleId) ?? []),
+      row.topic,
+    ]);
+  }
+  const ratingsByArticle = new Map<string, TopicRating[]>();
+  for (const row of ratings) {
+    ratingsByArticle.set(row.articleId, [
+      ...(ratingsByArticle.get(row.articleId) ?? []),
+      { topic: row.topic, reaction: row.reaction },
+    ]);
+  }
+  return articleRows.map(
+    (row): Article => ({
+      ...row,
+      hidden: Boolean(row.hidden),
+      skipReason: row.skipReason ?? undefined,
+      topics: topicsByArticle.get(row.id) ?? [],
+      topicRatings: ratingsByArticle.get(row.id) ?? [],
+    }),
+  );
+}
+
+export async function readArticlePage(
+  limit: number,
+  cursor?: ArticleCursor,
+): Promise<Omit<ArticlePage, "nextCursor"> & { next?: ArticleCursor }> {
+  const pageSize = Math.max(1, Math.min(100, Math.floor(limit)));
+  const query = `
+    SELECT id, source_id AS sourceId, source_name AS sourceName, url,
+      headline, byline, published_at AS publishedAt,
+      discovered_at AS discoveredAt, summary,
+      points_markdown AS pointsMarkdown,
+      image_url AS imageUrl, image_alt AS imageAlt,
+      image_kind AS imageKind, filter_decision AS filterDecision,
+      hidden, skip_reason AS skipReason
+    FROM articles
+    WHERE skip_reason IS NULL
+      ${
+        cursor
+          ? `AND (
+              discovered_at < ?
+              OR (discovered_at = ? AND id < ?)
+            )`
+          : ""
+      }
+    ORDER BY discovered_at DESC, id DESC
+    LIMIT ?
+  `;
+  const rows = database
+    .prepare(query)
+    .all(
+      ...(cursor
+        ? [cursor.discoveredAt, cursor.discoveredAt, cursor.id]
+        : []),
+      pageSize + 1,
+    ) as ArticleRow[];
+  const hasMore = rows.length > pageSize;
+  const pageRows = rows.slice(0, pageSize);
+  const articles = hydrateArticleRows(pageRows);
+  const last = articles.at(-1);
+  return {
+    articles,
+    hasMore,
+    ...(hasMore && last
+      ? { next: { discoveredAt: last.discoveredAt, id: last.id } }
+      : {}),
+  };
+}
+
 export async function addSource(source: Source) {
   insertSource(source);
-  return readState();
 }
 
 export async function removeSource(id: string) {
   database.prepare("DELETE FROM sources WHERE id = ?").run(id);
-  return readState();
 }
 
 export async function addTopicPreference(
@@ -558,14 +678,12 @@ export async function addTopicPreference(
         updated_at = excluded.updated_at
     `)
     .run(topicKey(normalized), normalized, reaction, new Date().toISOString());
-  return readState();
 }
 
 export async function removeTopicPreference(topic: string) {
   database
     .prepare("DELETE FROM topic_preferences WHERE topic_key = ?")
     .run(topicKey(topic));
-  return readState();
 }
 
 export function readSettings() {
@@ -773,7 +891,7 @@ export async function recordTopicRatings(
     database.exec("ROLLBACK");
     throw error;
   }
-  return readState();
+  return true;
 }
 
 export async function markSeen(id: string) {
@@ -963,60 +1081,79 @@ export function deleteAuthSession(token: string | undefined) {
     .run(sessionHash(token));
 }
 
-export async function commitIngestionRun(input: {
-  filterResults: FilterResult[];
-  seenArticleIds: string[];
-  articles: Article[];
-}) {
-  const insertFilterResult = database.prepare(`
-    INSERT INTO filter_results
-      (url, headline, byline, source_name, published_at, decision, filtered_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+function pruneIngestionHistory() {
+  database.exec(`
+    DELETE FROM seen_articles
+    WHERE article_id NOT IN (
+      SELECT article_id FROM seen_articles ORDER BY seen_at DESC LIMIT 2000
+    )
   `);
-  const insertSeen = database.prepare(`
-    INSERT OR IGNORE INTO seen_articles (article_id, seen_at) VALUES (?, ?)
+  database.exec(`
+    DELETE FROM articles
+    WHERE skip_reason IS NULL AND id NOT IN (
+      SELECT id FROM articles
+      WHERE skip_reason IS NULL
+      ORDER BY discovered_at DESC, id DESC LIMIT 250
+    )
   `);
-  const seenAt = new Date().toISOString();
+  database.exec(`
+    DELETE FROM articles
+    WHERE skip_reason IS NOT NULL AND id NOT IN (
+      SELECT id FROM articles
+      WHERE skip_reason IS NOT NULL
+      ORDER BY discovered_at DESC, id DESC LIMIT 250
+    )
+  `);
+}
 
+function insertFilterResultRow(result: FilterResult) {
+  database
+    .prepare(`
+      INSERT INTO filter_results
+        (url, headline, byline, source_name, published_at, decision, filtered_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    .run(
+      result.url,
+      result.headline,
+      result.byline,
+      result.sourceName,
+      result.publishedAt ?? null,
+      result.decision,
+      result.filteredAt,
+    );
+}
+
+export async function commitFilterPhase(input: {
+  filterResults: FilterResult[];
+  rejectedArticleIds: string[];
+}) {
   database.exec("BEGIN IMMEDIATE");
   try {
-    for (const result of input.filterResults) {
-      insertFilterResult.run(
-        result.url,
-        result.headline,
-        result.byline,
-        result.sourceName,
-        result.publishedAt ?? null,
-        result.decision,
-        result.filteredAt,
-      );
-    }
-    for (const id of input.seenArticleIds) {
-      insertSeen.run(id, seenAt);
-    }
-    for (const article of input.articles) insertArticle(article);
-    database.exec(`
-      DELETE FROM seen_articles
-      WHERE article_id NOT IN (
-        SELECT article_id FROM seen_articles ORDER BY seen_at DESC LIMIT 2000
+    for (const result of input.filterResults) insertFilterResultRow(result);
+    const insertSeen = database.prepare(
+      "INSERT OR IGNORE INTO seen_articles (article_id, seen_at) VALUES (?, ?)",
+    );
+    const seenAt = new Date().toISOString();
+    for (const id of input.rejectedArticleIds) insertSeen.run(id, seenAt);
+    pruneIngestionHistory();
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function commitAnalysedArticle(article: Article) {
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database
+      .prepare(
+        "INSERT OR IGNORE INTO seen_articles (article_id, seen_at) VALUES (?, ?)",
       )
-    `);
-    database.exec(`
-      DELETE FROM articles
-      WHERE skip_reason IS NULL AND id NOT IN (
-        SELECT id FROM articles
-        WHERE skip_reason IS NULL
-        ORDER BY discovered_at DESC LIMIT 250
-      )
-    `);
-    database.exec(`
-      DELETE FROM articles
-      WHERE skip_reason IS NOT NULL AND id NOT IN (
-        SELECT id FROM articles
-        WHERE skip_reason IS NOT NULL
-        ORDER BY discovered_at DESC LIMIT 250
-      )
-    `);
+      .run(article.id, new Date().toISOString());
+    insertArticle(article);
+    pruneIngestionHistory();
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");

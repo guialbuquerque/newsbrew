@@ -17,9 +17,8 @@ export async function POST({ request }: APIEvent) {
   if (!parsed.success) {
     return Response.json({ error: parsed.error.message }, { status: 400 });
   }
-  return Response.json(
-    await addTopicPreference(parsed.data.topic, parsed.data.reaction),
-  );
+  await addTopicPreference(parsed.data.topic, parsed.data.reaction);
+  return Response.json({ updated: true });
 }
 
 export async function DELETE({ request }: APIEvent) {
@@ -28,5 +27,6 @@ export async function DELETE({ request }: APIEvent) {
   if (!topic) {
     return Response.json({ error: "Missing topic" }, { status: 400 });
   }
-  return Response.json(await removeTopicPreference(topic));
+  await removeTopicPreference(topic);
+  return Response.json({ removed: true });
 }

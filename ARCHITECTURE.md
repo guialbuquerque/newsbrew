@@ -74,10 +74,16 @@ Progress is weighted by phase:
 One abort controller is threaded through feed downloads, article extraction,
 model context lookup, filter turns, and analyser turns.
 
-Filter results, seen IDs, and analysed articles are accumulated in memory and
-committed in one SQLite transaction after the complete run. Stopping before
-that commit discards the pending ingestion rows while preserving completed
-earlier refreshes.
+Filter decisions are accumulated in memory until the complete filtering phase
+succeeds, then every filter result and explicit `NO` seen ID is committed in
+one transaction. An abort or failure during filtering stores none of that
+phase.
+
+After the filter transaction commits, each accepted article is an independent
+analysis operation. Its article and seen ID are committed immediately in one
+transaction, then published to connected clients. Stopping or failing later in
+the analysis phase preserves completed articles and leaves unfinished articles
+eligible for a later refresh.
 
 SQLite is used directly through Node's `node:sqlite`; there is no ORM or storage
 abstraction. The project is unreleased, so schema changes update the canonical
@@ -143,6 +149,11 @@ protection.
 RSS parsing supports both RSS and namespaced Atom feeds, including attributed
 Atom text constructs such as `<title type="html">` and `rel="alternate"`
 links.
+
+The dashboard feed is read in stable 20-article cursor pages. The client loads
+the next page as the end of the current list approaches. Newly committed
+articles are delivered over the refresh WebSocket and prepended with scroll
+anchoring so the reader's current content does not jump.
 
 Article images are never generated. Prefer publisher-provided images; otherwise
 use a topic-related image, label it as related, and render it at reduced height.

@@ -9,7 +9,8 @@ import { relatedImageForTopics } from "./images.ts";
 import { calculateRefreshPercent } from "./refresh-progress.ts";
 import { parseFeed } from "./rss.ts";
 import {
-  commitIngestionRun,
+  commitAnalysedArticle,
+  commitFilterPhase,
   deleteOldFilterResults,
   readState,
   recordRun,
@@ -27,6 +28,7 @@ import { stableId } from "./utils.ts";
 export type IngestionOptions = {
   runId?: string;
   onProgress?: (progress: RefreshProgress) => void;
+  onArticle?: (article: Article) => void;
   abortController?: AbortController;
 };
 
@@ -114,11 +116,9 @@ export async function runIngestion(options: IngestionOptions = {}) {
   ]);
   const candidates: Candidate[] = [];
   const acceptedCandidates: AcceptedCandidate[] = [];
-  const analysedArticles: Article[] = [];
   const pendingFilterResults: FilterResult[] = [];
-  const pendingSeenArticleIds: string[] = [];
+  const rejectedArticleIds: string[] = [];
 
-  await deleteOldFilterResults();
   publish();
 
   for (const source of enabledSources) {
@@ -189,7 +189,7 @@ export async function runIngestion(options: IngestionOptions = {}) {
         sourceName: candidate.source.name,
       });
       signal?.throwIfAborted();
-      pendingFilterResults.push({
+      const filterResult: FilterResult = {
         url: candidate.item.url,
         headline: candidate.item.headline,
         byline: candidate.item.byline,
@@ -197,18 +197,25 @@ export async function runIngestion(options: IngestionOptions = {}) {
         publishedAt: candidate.item.publishedAt,
         decision,
         filteredAt: new Date().toISOString(),
-      });
+      };
+      pendingFilterResults.push(filterResult);
       console.info(
         `[refresh] Filter response ${position}/${progress.filters.total}: ${decision.toUpperCase()}`,
       );
       if (decision === "yes") {
         progress.filters.accepted += 1;
-        acceptedCandidates.push({ ...candidate, filterDecision: decision });
+        acceptedCandidates.push({
+          ...candidate,
+          filterDecision: decision,
+        });
       } else if (decision === "maybe") {
         progress.filters.maybe += 1;
-        acceptedCandidates.push({ ...candidate, filterDecision: decision });
+        acceptedCandidates.push({
+          ...candidate,
+          filterDecision: decision,
+        });
       } else {
-        pendingSeenArticleIds.push(candidate.id);
+        rejectedArticleIds.push(candidate.id);
       }
       stepFinished = true;
     } catch (error) {
@@ -225,6 +232,12 @@ export async function runIngestion(options: IngestionOptions = {}) {
       }
     }
   }
+
+  signal?.throwIfAborted();
+  await commitFilterPhase({
+    filterResults: pendingFilterResults,
+    rejectedArticleIds,
+  });
 
   progress.phase = "analysing";
   progress.analyses.total = acceptedCandidates.length;
@@ -266,7 +279,7 @@ export async function runIngestion(options: IngestionOptions = {}) {
             kind: "article" as const,
           }
         : relatedImageForTopics(analysis.tags);
-      analysedArticles.push({
+      const analysedArticle: Article = {
         id: candidate.id,
         sourceId: candidate.source.id,
         sourceName: candidate.source.name,
@@ -285,13 +298,14 @@ export async function runIngestion(options: IngestionOptions = {}) {
         topicRatings: [],
         hidden: false,
         skipReason: analysis.skipReason ?? undefined,
-      });
+      };
+      await commitAnalysedArticle(analysedArticle);
       if (analysis.skipReason) {
         progress.analyses.skipped += 1;
       } else {
         progress.analyses.stored += 1;
+        options.onArticle?.(analysedArticle);
       }
-      pendingSeenArticleIds.push(candidate.id);
       stepFinished = true;
     } catch (error) {
       if (signal?.aborted) throw error;
@@ -303,7 +317,7 @@ export async function runIngestion(options: IngestionOptions = {}) {
               kind: "article" as const,
             }
           : relatedImageForTopics([]);
-        analysedArticles.push({
+        const skippedArticle: Article = {
           id: candidate.id,
           sourceId: candidate.source.id,
           sourceName: candidate.source.name,
@@ -322,8 +336,8 @@ export async function runIngestion(options: IngestionOptions = {}) {
           topicRatings: [],
           hidden: false,
           skipReason: error.skipReason,
-        });
-        pendingSeenArticleIds.push(candidate.id);
+        };
+        await commitAnalysedArticle(skippedArticle);
         progress.analyses.skipped += 1;
         console.warn(
           `[refresh] Skipped "${candidate.item.headline}" with reason ${error.skipReason}: ${error.message}`,
@@ -344,11 +358,6 @@ export async function runIngestion(options: IngestionOptions = {}) {
   }
 
   signal?.throwIfAborted();
-  await commitIngestionRun({
-    filterResults: pendingFilterResults,
-    seenArticleIds: pendingSeenArticleIds,
-    articles: analysedArticles,
-  });
   await deleteOldFilterResults();
   await recordRun();
   progress.status = "completed";

@@ -151,37 +151,101 @@ test("stores ratings, skipped articles, and retained filter decisions", async ()
       ],
     );
 
+    const immediateArticle: Article = {
+      ...article,
+      id: "immediate-story",
+      url: "https://example.com/immediate",
+      discoveredAt: "2026-07-30T12:00:00.000Z",
+    };
     await assert.rejects(
-      store.commitIngestionRun({
+      store.commitFilterPhase({
         filterResults: [
           {
-            url: "https://example.com/rolled-back",
-            headline: "Rolled back result",
+            url: "https://example.com/filter-rollback",
+            headline: "Filter phase rollback",
             byline: "Rollback author",
-            sourceName: "Rollback Source",
+            sourceName: "Rollback source",
             decision: "yes",
-            filteredAt: now.toISOString(),
+            filteredAt: "2026-07-30T11:58:00.000Z",
           },
-        ],
-        seenArticleIds: ["rolled-back-seen"],
-        articles: [
           {
-            ...article,
-            id: "invalid-article",
-            sourceId: "missing-source",
-            url: "https://example.com/invalid",
+            url: "https://example.com/filter-invalid",
+            headline: "Invalid filter decision",
+            byline: "Rollback author",
+            sourceName: "Rollback source",
+            decision: "invalid" as "yes",
+            filteredAt: "2026-07-30T11:58:01.000Z",
           },
         ],
+        rejectedArticleIds: ["filter-rollback-seen"],
       }),
     );
-    state = await store.readState();
-    assert.equal(state.seen.includes("rolled-back-seen"), false);
     assert.equal(
       (await store.readFilterResults()).some(
-        (result) => result.headline === "Rolled back result",
+        (result) => result.url === "https://example.com/filter-rollback",
       ),
       false,
     );
+    assert.equal(
+      (await store.readState()).seen.includes("filter-rollback-seen"),
+      false,
+    );
+
+    await store.commitFilterPhase({
+      filterResults: [{
+        url: immediateArticle.url,
+        headline: immediateArticle.headline,
+        byline: immediateArticle.byline,
+        sourceName: immediateArticle.sourceName,
+        decision: "yes",
+        filteredAt: "2026-07-30T11:59:00.000Z",
+      }],
+      rejectedArticleIds: [],
+    });
+    await store.commitAnalysedArticle(immediateArticle);
+    state = await store.readState();
+    assert.equal(
+      state.articles.some((item) => item.id === immediateArticle.id),
+      true,
+    );
+    assert.equal(state.seen.includes(immediateArticle.id), true);
+    assert.equal(
+      (await store.readFilterResults()).some(
+        (result) => result.url === immediateArticle.url,
+      ),
+      true,
+    );
+
+    await store.mergeArticles(
+      Array.from({ length: 25 }, (_, index) => ({
+        ...article,
+        id: `page-story-${String(index).padStart(2, "0")}`,
+        url: `https://example.com/page/${index}`,
+        discoveredAt: new Date(
+          Date.UTC(2026, 6, 29, 0, index),
+        ).toISOString(),
+      })),
+    );
+    const firstPage = await store.readArticlePage(20);
+    assert.equal(firstPage.articles.length, 20);
+    assert.equal(firstPage.hasMore, true);
+    assert.ok(firstPage.next);
+    const secondPage = await store.readArticlePage(20, firstPage.next);
+    assert.equal(secondPage.articles.length >= 5, true);
+    assert.equal(
+      new Set([
+        ...firstPage.articles.map((item) => item.id),
+        ...secondPage.articles.map((item) => item.id),
+      ]).size,
+      firstPage.articles.length + secondPage.articles.length,
+    );
+    const metadataOnly = await store.readState({
+      includeArticles: false,
+      includeSeen: false,
+    });
+    assert.deepEqual(metadataOnly.articles, []);
+    assert.deepEqual(metadataOnly.seen, []);
+
   } finally {
     delete process.env.NEWSBREW_CONFIG_JSON;
     rmSync(directory, { recursive: true, force: true });

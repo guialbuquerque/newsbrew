@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { runIngestionSafely } from "./ingest.ts";
-import type { RefreshProgress } from "./types.ts";
+import type { Article, RefreshEvent, RefreshProgress } from "./types.ts";
 
-type RefreshListener = (progress: RefreshProgress) => void;
+type RefreshListener = (event: RefreshEvent) => void;
 
 type RefreshRuntime = {
   progress: RefreshProgress;
   activeRun?: Promise<void>;
   abortController?: AbortController;
+  liveArticles: Article[];
   listeners: Set<RefreshListener>;
 };
 
@@ -33,16 +34,40 @@ const runtime =
   sharedGlobal.__newsbrewRefreshRuntime ??
   (sharedGlobal.__newsbrewRefreshRuntime = {
     progress: emptyProgress,
+    liveArticles: [],
     listeners: new Set(),
   });
 
-function publish(progress: RefreshProgress) {
+function publishProgress(progress: RefreshProgress) {
   runtime.progress = progress;
-  for (const listener of runtime.listeners) listener(progress);
+  const event: RefreshEvent = { type: "progress", progress };
+  for (const listener of runtime.listeners) {
+    try {
+      listener(event);
+    } catch (error) {
+      console.warn("[refresh] Could not publish progress event", error);
+    }
+  }
+}
+
+function publishArticle(runId: string, article: Article) {
+  runtime.liveArticles.push(article);
+  const event: RefreshEvent = { type: "article", runId, article };
+  for (const listener of runtime.listeners) {
+    try {
+      listener(event);
+    } catch (error) {
+      console.warn("[refresh] Could not publish article event", error);
+    }
+  }
 }
 
 export function getRefreshProgress() {
   return runtime.progress;
+}
+
+export function getLiveRefreshArticles() {
+  return runtime.progress.status === "running" ? runtime.liveArticles : [];
 }
 
 export function subscribeToRefresh(listener: RefreshListener) {
@@ -62,7 +87,8 @@ export function startRefresh() {
   const abortController = new AbortController();
   runtime.abortController = abortController;
   const startedAt = new Date().toISOString();
-  publish({
+  runtime.liveArticles = [];
+  publishProgress({
     ...emptyProgress,
     runId,
     status: "running",
@@ -73,14 +99,17 @@ export function startRefresh() {
 
   runtime.activeRun = runIngestionSafely({
     runId,
-    onProgress: publish,
+    onProgress: publishProgress,
+    onArticle: (article) => publishArticle(runId, article),
     abortController,
   })
     .then(() => undefined)
     .catch((error) => {
       if (abortController.signal.aborted) {
-        console.info("[refresh] Refresh stopped; pending rows discarded");
-        publish({
+        console.info(
+          "[refresh] Refresh stopped; completed phases and analyses kept",
+        );
+        publishProgress({
           ...runtime.progress,
           status: "stopped",
           phase: "stopped",
@@ -88,7 +117,7 @@ export function startRefresh() {
         });
         return;
       }
-      publish({
+      publishProgress({
         ...runtime.progress,
         status: "failed",
         phase: "failed",

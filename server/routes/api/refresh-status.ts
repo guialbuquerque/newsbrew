@@ -1,6 +1,7 @@
 import { defineWebSocketHandler } from "nitro";
 import { isAuthenticated } from "../../../src/lib/auth.ts";
 import {
+  getLiveRefreshArticles,
   getRefreshProgress,
   subscribeToRefresh,
 } from "../../../src/lib/refresh.ts";
@@ -14,13 +15,25 @@ export default defineWebSocketHandler({
     }
   },
   open(peer) {
-    peer.send(JSON.stringify(getRefreshProgress()));
     subscriptions.set(
       peer.id,
-      subscribeToRefresh((progress) => {
-        peer.send(JSON.stringify(progress));
+      subscribeToRefresh((event) => {
+        peer.send(JSON.stringify(event));
       }),
     );
+    const progress = getRefreshProgress();
+    peer.send(JSON.stringify({ type: "progress", progress }));
+    if (progress.runId) {
+      for (const article of getLiveRefreshArticles()) {
+        peer.send(
+          JSON.stringify({
+            type: "article",
+            runId: progress.runId,
+            article,
+          }),
+        );
+      }
+    }
   },
   close(peer) {
     subscriptions.get(peer.id)?.();

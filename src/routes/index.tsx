@@ -22,6 +22,7 @@ import {
 import {
   For,
   Show,
+  createEffect,
   createMemo,
   createSignal,
   onCleanup,
@@ -36,6 +37,7 @@ import type {
   AuthStatus,
   DashboardState,
   Reaction,
+  RefreshEvent,
   RefreshProgress,
   TopicRating,
 } from "~/lib/types";
@@ -75,7 +77,7 @@ function progressMessage(progress: RefreshProgress) {
       : "Refresh failed.";
   }
   if (progress.phase === "stopped") {
-    return "Refresh stopped · unfinished work discarded";
+    return "Refresh stopped · completed analyses kept";
   }
   return "";
 }
@@ -109,11 +111,14 @@ function ArticleImage(props: { article: Article }) {
 
 export default function Home() {
   let settingsDialog: HTMLDialogElement | undefined;
+  let revealAnimationFrame: number | undefined;
   const [state, setState] = createSignal<DashboardState>();
   const [auth, setAuth] = createSignal<AuthStatus>();
   const [authLoading, setAuthLoading] = createSignal(true);
   const [authBusy, setAuthBusy] = createSignal(false);
   const [loading, setLoading] = createSignal(true);
+  const [loadingMore, setLoadingMore] = createSignal(false);
+  const [feedSentinel, setFeedSentinel] = createSignal<HTMLDivElement>();
   const [refreshing, setRefreshing] = createSignal(false);
   const [stopping, setStopping] = createSignal(false);
   const [refreshProgress, setRefreshProgress] =
@@ -150,6 +155,94 @@ export default function Home() {
       ) ?? [],
   );
 
+  function mergeArticles(...groups: Article[][]) {
+    const byId = new Map<string, Article>();
+    for (const group of groups) {
+      for (const article of group) {
+        if (!byId.has(article.id)) byId.set(article.id, article);
+      }
+    }
+    return [...byId.values()].sort(
+      (left, right) =>
+        right.discoveredAt.localeCompare(left.discoveredAt) ||
+        right.id.localeCompare(left.id),
+    );
+  }
+
+  function animateFeedReveal(distance: number) {
+    if (revealAnimationFrame !== undefined) {
+      cancelAnimationFrame(revealAnimationFrame);
+    }
+
+    const start = window.scrollY;
+    const target = Math.max(0, start + distance);
+    if (
+      target === start ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      window.scrollTo({ top: target, behavior: "auto" });
+      revealAnimationFrame = undefined;
+      return;
+    }
+
+    const startedAt = performance.now();
+    const duration = 240;
+    const step = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - (1 - progress) ** 3;
+      window.scrollTo({
+        top: start + (target - start) * eased,
+        behavior: "auto",
+      });
+      if (progress < 1) {
+        revealAnimationFrame = requestAnimationFrame(step);
+      } else {
+        revealAnimationFrame = undefined;
+      }
+    };
+    revealAnimationFrame = requestAnimationFrame(step);
+  }
+
+  function preserveFeedPosition(
+    update: () => void,
+    revealNewItemsAtTop = false,
+  ) {
+    const firstArticle = document.querySelector<HTMLElement>(
+      ".article-list > [data-feed-article]:first-child",
+    );
+    const firstArticleId = firstArticle?.dataset.feedArticle;
+    const firstTop = firstArticle?.getBoundingClientRect().top;
+    const statusBottom =
+      document
+        .querySelector<HTMLElement>(".feed-column > .notice")
+        ?.getBoundingClientRect().bottom ?? 0;
+    const wasAtTop =
+      firstTop !== undefined && firstTop >= Math.max(0, statusBottom) - 4;
+
+    update();
+
+    if (!firstArticleId || firstTop === undefined) return;
+    requestAnimationFrame(() => {
+      const anchoredArticle = document.querySelector<HTMLElement>(
+        `.article-list > [data-feed-article="${CSS.escape(firstArticleId)}"]`,
+      );
+      if (!anchoredArticle) return;
+      const heightAdded =
+        anchoredArticle.getBoundingClientRect().top - firstTop;
+      if (heightAdded <= 0) return;
+
+      window.scrollTo({
+        top: window.scrollY + heightAdded,
+        behavior: "auto",
+      });
+      if (wasAtTop && revealNewItemsAtTop) {
+        requestAnimationFrame(() => {
+          animateFeedReveal(-Math.min(40, window.scrollY));
+        });
+      }
+    });
+  }
+
   async function load(options: { clearNotice?: boolean } = {}) {
     try {
       const response = await fetch("/api/state");
@@ -159,7 +252,25 @@ export default function Home() {
       }
       if (!response.ok) throw new Error("Could not load your digest");
       const next = (await response.json()) as DashboardState;
-      setState(next);
+      const current = state();
+      if (current) {
+        const currentIds = new Set(
+          current.articles.map((article) => article.id),
+        );
+        const hasNewArticles = next.articles.some(
+          (article) => !currentIds.has(article.id),
+        );
+        preserveFeedPosition(
+          () =>
+            setState({
+              ...next,
+              articles: mergeArticles(next.articles, current.articles),
+            }),
+          hasNewArticles,
+        );
+      } else {
+        setState(next);
+      }
       setPollInterval(String(next.runtime.pollIntervalMinutes));
       setMaxItems(String(next.runtime.maxItemsPerSource));
       setLlmBaseURL(next.llm.baseURL);
@@ -171,6 +282,59 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadMoreArticles() {
+    const current = state();
+    const cursor = current?.feed.nextCursor;
+    if (!current?.feed.hasMore || !cursor || loadingMore()) return;
+
+    let shouldContinue = false;
+    setLoadingMore(true);
+    try {
+      const response = await fetch(
+        `/api/state?cursor=${encodeURIComponent(cursor)}`,
+      );
+      if (response.status === 401) return;
+      if (!response.ok) throw new Error("Could not load more stories");
+      const next = (await response.json()) as DashboardState;
+      setState((latest) => {
+        if (!latest) return next;
+        const existingIds = new Set(
+          latest.articles.map((article) => article.id),
+        );
+        const added = next.articles.filter(
+          (article) => !existingIds.has(article.id),
+        ).length;
+        shouldContinue = added === 0 && next.feed.hasMore;
+        return {
+          ...latest,
+          articles: mergeArticles(latest.articles, next.articles),
+          feed: next.feed,
+        };
+      });
+    } catch (error) {
+      setNotice(readError(error));
+    } finally {
+      setLoadingMore(false);
+    }
+    if (shouldContinue) queueMicrotask(() => void loadMoreArticles());
+  }
+
+  function prependLiveArticle(article: Article) {
+    const current = state();
+    if (!current || current.articles.some((item) => item.id === article.id)) {
+      return;
+    }
+
+    preserveFeedPosition(
+      () =>
+        setState({
+          ...current,
+          articles: mergeArticles([article], current.articles),
+        }),
+      true,
+    );
   }
 
   function applyProgress(progress: RefreshProgress) {
@@ -191,14 +355,31 @@ export default function Home() {
       setRefreshing(false);
       setStopping(false);
       setNotice(progressMessage(progress));
+      void load();
       return;
     }
     if (progress.status === "stopped") {
       setRefreshing(false);
       setStopping(false);
       setNotice(progressMessage(progress));
+      void load();
     }
   }
+
+  createEffect(() => {
+    const sentinel = feedSentinel();
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          void loadMoreArticles();
+        }
+      },
+      { rootMargin: "800px 0px" },
+    );
+    observer.observe(sentinel);
+    onCleanup(() => observer.disconnect());
+  });
 
   onMount(() => {
     void load();
@@ -213,7 +394,12 @@ export default function Home() {
       );
       socket.addEventListener("message", (event) => {
         try {
-          applyProgress(JSON.parse(String(event.data)) as RefreshProgress);
+          const refreshEvent = JSON.parse(String(event.data)) as RefreshEvent;
+          if (refreshEvent.type === "article") {
+            prependLiveArticle(refreshEvent.article);
+          } else {
+            applyProgress(refreshEvent.progress);
+          }
         } catch {
           setNotice("Received an invalid refresh status update.");
         }
@@ -227,6 +413,9 @@ export default function Home() {
     onCleanup(() => {
       stopped = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (revealAnimationFrame !== undefined) {
+        cancelAnimationFrame(revealAnimationFrame);
+      }
       socket?.close();
     });
   });
@@ -745,7 +934,10 @@ export default function Home() {
                     <Show
                       when={!article.hidden}
                       fallback={
-                        <Card class="article-card hidden-article">
+                        <Card
+                          data-feed-article={article.id}
+                          class="article-card hidden-article"
+                        >
                           <div class="hidden-story-copy">
                             <EyeOff size={14} />
                             <div>
@@ -777,6 +969,7 @@ export default function Home() {
                       }
                     >
                       <Card
+                        data-feed-article={article.id}
                         class={
                           article.filterDecision === "maybe"
                             ? "article-card maybe-article"
@@ -853,6 +1046,18 @@ export default function Home() {
                   )}
                 </For>
               </div>
+              <Show when={state()?.feed.hasMore}>
+                <div
+                  ref={setFeedSentinel}
+                  class="feed-sentinel"
+                  aria-live="polite"
+                >
+                  <Show when={loadingMore()}>
+                    <LoaderCircle class="animate-spin" size={18} />
+                    <span>Loading more stories…</span>
+                  </Show>
+                </div>
+              </Show>
             </Show>
           </Show>
         </section>

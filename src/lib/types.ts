@@ -93,6 +93,28 @@ export type RefreshProgress = {
   error?: string;
 };
 
+export type RefreshEvent =
+  | {
+      type: "progress";
+      progress: RefreshProgress;
+    }
+  | {
+      type: "article";
+      runId: string;
+      article: Article;
+    };
+
+export type ArticleCursor = {
+  discoveredAt: string;
+  id: string;
+};
+
+export type ArticlePage = {
+  articles: Article[];
+  hasMore: boolean;
+  nextCursor?: string;
+};
+
 export type AppState = {
   sources: Source[];
   articles: Article[];
@@ -103,6 +125,7 @@ export type AppState = {
 };
 
 export type DashboardState = AppState & {
+  feed: Omit<ArticlePage, "articles">;
   filter: {
     generalGuidance: string;
   };
