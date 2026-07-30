@@ -4,6 +4,17 @@ export type ModelContext = {
   maximumContextTokens: number;
 };
 
+export function staticModelContext(
+  model: string,
+  contextTokens: number,
+): ModelContext {
+  return {
+    model,
+    activeContextTokens: contextTokens,
+    maximumContextTokens: contextTokens,
+  };
+}
+
 type ModelRecord = {
   key?: unknown;
   max_context_length?: unknown;

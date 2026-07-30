@@ -17,6 +17,10 @@ const sourceSchema = z.object({
   enabled: z.boolean().default(true),
 });
 
+export const providerModeSchema = z.enum(["lm-studio", "openai-compatible"]);
+
+export type ProviderMode = z.infer<typeof providerModeSchema>;
+
 export const importedConfigSchema = z.object({
   databaseFile: z.string().min(1).optional(),
   runtime: z
@@ -27,9 +31,11 @@ export const importedConfigSchema = z.object({
     .optional(),
   llm: z
     .object({
+      providerMode: providerModeSchema.optional(),
       baseURL: z.string().url().optional(),
       model: z.string().min(1).optional(),
       apiKey: z.string().optional(),
+      contextTokens: positiveNumber.optional(),
     })
     .optional(),
   filter: z
@@ -97,9 +103,11 @@ function readImportedConfig() {
 export const importedConfig = readImportedConfig();
 
 export type RuntimeConfig = {
+  llmProviderMode: ProviderMode;
   lmStudioBaseURL: string;
   lmStudioModel: string;
   lmStudioApiKey: string;
+  llmContextTokens: number;
   filterGeneralGuidance: string;
   pollIntervalMinutes: number;
   maxItemsPerSource: number;
@@ -118,9 +126,11 @@ function configuredDatabaseFile() {
 }
 
 export const config: RuntimeConfig = {
+  llmProviderMode: importedConfig.value?.llm?.providerMode ?? "lm-studio",
   lmStudioBaseURL: importedConfig.value?.llm?.baseURL ?? "",
   lmStudioModel: importedConfig.value?.llm?.model ?? "",
   lmStudioApiKey: importedConfig.value?.llm?.apiKey ?? "",
+  llmContextTokens: importedConfig.value?.llm?.contextTokens ?? 131_072,
   filterGeneralGuidance:
     importedConfig.value?.filter?.generalGuidance ?? "",
   pollIntervalMinutes:

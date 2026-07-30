@@ -110,9 +110,12 @@ database.exec(`
     id INTEGER PRIMARY KEY CHECK (id = 1),
     poll_interval_minutes REAL NOT NULL,
     max_items_per_source INTEGER NOT NULL,
+    llm_provider_mode TEXT NOT NULL DEFAULT 'lm-studio'
+      CHECK (llm_provider_mode IN ('lm-studio', 'openai-compatible')),
     llm_base_url TEXT NOT NULL,
     llm_model TEXT NOT NULL,
     llm_api_key TEXT NOT NULL,
+    llm_context_tokens INTEGER NOT NULL DEFAULT 131072,
     general_guidance TEXT NOT NULL DEFAULT ''
   );
 
@@ -263,15 +266,18 @@ function initializeSettings() {
     .prepare(`
       INSERT OR IGNORE INTO app_settings (
         id, poll_interval_minutes, max_items_per_source,
-        llm_base_url, llm_model, llm_api_key, general_guidance
-      ) VALUES (1, ?, ?, ?, ?, ?, ?)
+        llm_provider_mode, llm_base_url, llm_model, llm_api_key,
+        llm_context_tokens, general_guidance
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .run(
       config.pollIntervalMinutes,
       config.maxItemsPerSource,
+      config.llmProviderMode,
       config.lmStudioBaseURL,
       config.lmStudioModel,
       config.lmStudioApiKey,
+      config.llmContextTokens,
       config.filterGeneralGuidance,
     );
   database
@@ -304,17 +310,21 @@ export function importConfiguredSettings(force = false) {
         .prepare(`
           SELECT poll_interval_minutes AS pollIntervalMinutes,
             max_items_per_source AS maxItemsPerSource,
+            llm_provider_mode AS llmProviderMode,
             llm_base_url AS llmBaseURL, llm_model AS llmModel,
             llm_api_key AS llmApiKey,
+            llm_context_tokens AS llmContextTokens,
             general_guidance AS generalGuidance
           FROM app_settings WHERE id = 1
         `)
         .get() as {
         pollIntervalMinutes: number;
         maxItemsPerSource: number;
+        llmProviderMode: string;
         llmBaseURL: string;
         llmModel: string;
         llmApiKey: string;
+        llmContextTokens: number;
         generalGuidance: string;
       };
       database
@@ -322,18 +332,22 @@ export function importConfiguredSettings(force = false) {
           UPDATE app_settings SET
             poll_interval_minutes = ?,
             max_items_per_source = ?,
+            llm_provider_mode = ?,
             llm_base_url = ?,
             llm_model = ?,
             llm_api_key = ?,
+            llm_context_tokens = ?,
             general_guidance = ?
           WHERE id = 1
         `)
         .run(
           next.runtime?.pollIntervalMinutes ?? current.pollIntervalMinutes,
           next.runtime?.maxItemsPerSource ?? current.maxItemsPerSource,
+          next.llm?.providerMode ?? current.llmProviderMode,
           next.llm?.baseURL ?? current.llmBaseURL,
           next.llm?.model ?? current.llmModel,
           next.llm?.apiKey ?? current.llmApiKey,
+          next.llm?.contextTokens ?? current.llmContextTokens,
           next.filter?.generalGuidance ?? current.generalGuidance,
         );
     }
@@ -398,18 +412,22 @@ function hydrateRuntimeConfig() {
     .prepare(`
       SELECT poll_interval_minutes AS pollIntervalMinutes,
         max_items_per_source AS maxItemsPerSource,
+        llm_provider_mode AS llmProviderMode,
         llm_base_url AS lmStudioBaseURL,
         llm_model AS lmStudioModel,
         llm_api_key AS lmStudioApiKey,
+        llm_context_tokens AS llmContextTokens,
         general_guidance AS filterGeneralGuidance
       FROM app_settings WHERE id = 1
     `)
     .get() as {
     pollIntervalMinutes: number;
     maxItemsPerSource: number;
+    llmProviderMode: "lm-studio" | "openai-compatible";
     lmStudioBaseURL: string;
     lmStudioModel: string;
     lmStudioApiKey: string;
+    llmContextTokens: number;
     filterGeneralGuidance: string;
   };
   applyRuntimeConfig(settings);
@@ -691,17 +709,21 @@ export function readSettings() {
     .prepare(`
       SELECT poll_interval_minutes AS pollIntervalMinutes,
         max_items_per_source AS maxItemsPerSource,
+        llm_provider_mode AS providerMode,
         llm_base_url AS baseURL, llm_model AS model,
         length(llm_api_key) > 0 AS hasApiKey,
+        llm_context_tokens AS contextTokens,
         general_guidance AS generalGuidance
       FROM app_settings WHERE id = 1
     `)
     .get() as {
     pollIntervalMinutes: number;
     maxItemsPerSource: number;
+    providerMode: "lm-studio" | "openai-compatible";
     baseURL: string;
     model: string;
     hasApiKey: number;
+    contextTokens: number;
     generalGuidance: string;
   };
   return {
@@ -710,9 +732,11 @@ export function readSettings() {
       maxItemsPerSource: settings.maxItemsPerSource,
     },
     llm: {
+      providerMode: settings.providerMode,
       baseURL: settings.baseURL,
       model: settings.model,
       hasApiKey: Boolean(settings.hasApiKey),
+      contextTokens: settings.contextTokens,
     },
     filter: {
       generalGuidance: settings.generalGuidance,
@@ -725,17 +749,21 @@ export function readSettingsSnapshot() {
     .prepare(`
       SELECT poll_interval_minutes AS pollIntervalMinutes,
         max_items_per_source AS maxItemsPerSource,
+        llm_provider_mode AS providerMode,
         llm_base_url AS baseURL, llm_model AS model,
         llm_api_key AS apiKey,
+        llm_context_tokens AS contextTokens,
         general_guidance AS generalGuidance
       FROM app_settings WHERE id = 1
     `)
     .get() as {
     pollIntervalMinutes: number;
     maxItemsPerSource: number;
+    providerMode: "lm-studio" | "openai-compatible";
     baseURL: string;
     model: string;
     apiKey: string;
+    contextTokens: number;
     generalGuidance: string;
   };
   const sources = (
@@ -769,9 +797,11 @@ export function readSettingsSnapshot() {
       maxItemsPerSource: settings.maxItemsPerSource,
     },
     llm: {
+      providerMode: settings.providerMode,
       baseURL: settings.baseURL,
       model: settings.model,
       apiKey: settings.apiKey,
+      contextTokens: settings.contextTokens,
     },
     filter: {
       generalGuidance: settings.generalGuidance,
@@ -792,9 +822,11 @@ export function readSettingsSnapshot() {
 export function updateSettings(next: {
   pollIntervalMinutes: number;
   maxItemsPerSource: number;
+  llmProviderMode: "lm-studio" | "openai-compatible";
   llmBaseURL: string;
   llmModel: string;
   llmApiKey?: string;
+  llmContextTokens: number;
   generalGuidance: string;
 }) {
   const current = database
@@ -806,18 +838,22 @@ export function updateSettings(next: {
       UPDATE app_settings SET
         poll_interval_minutes = ?,
         max_items_per_source = ?,
+        llm_provider_mode = ?,
         llm_base_url = ?,
         llm_model = ?,
         llm_api_key = ?,
+        llm_context_tokens = ?,
         general_guidance = ?
       WHERE id = 1
     `)
     .run(
       next.pollIntervalMinutes,
       next.maxItemsPerSource,
+      next.llmProviderMode,
       next.llmBaseURL,
       next.llmModel,
       apiKey,
+      next.llmContextTokens,
       next.generalGuidance.trim(),
     );
   hydrateRuntimeConfig();

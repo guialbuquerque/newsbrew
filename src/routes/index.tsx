@@ -160,9 +160,11 @@ export default function Home() {
   const [topicReaction, setTopicReaction] = createSignal<Reaction>("like");
   const [pollInterval, setPollInterval] = createSignal("30");
   const [maxItems, setMaxItems] = createSignal("8");
+  const [llmProviderMode, setLlmProviderMode] = createSignal<"lm-studio" | "openai-compatible">("lm-studio");
   const [llmBaseURL, setLlmBaseURL] = createSignal("");
   const [llmModel, setLlmModel] = createSignal("");
   const [llmApiKey, setLlmApiKey] = createSignal("");
+  const [llmContextTokens, setLlmContextTokens] = createSignal("131072");
   const [generalGuidance, setGeneralGuidance] = createSignal("");
   const [accessTokenAttempt, setAccessTokenAttempt] = createSignal("");
   const [accessTokenDraft, setAccessTokenDraft] = createSignal("");
@@ -360,8 +362,10 @@ export default function Home() {
       }
       setPollInterval(String(next.runtime.pollIntervalMinutes));
       setMaxItems(String(next.runtime.maxItemsPerSource));
+      setLlmProviderMode(next.llm.providerMode);
       setLlmBaseURL(next.llm.baseURL);
       setLlmModel(next.llm.model);
+      setLlmContextTokens(String(next.llm.contextTokens));
       setGeneralGuidance(next.filter.generalGuidance);
       if (options.clearNotice) setNotice("");
     } catch (error) {
@@ -777,8 +781,10 @@ export default function Home() {
         body: JSON.stringify({
           pollIntervalMinutes: Number(pollInterval()),
           maxItemsPerSource: Number(maxItems()),
+          llmProviderMode: llmProviderMode(),
           llmBaseURL: llmBaseURL(),
           llmModel: llmModel(),
+          llmContextTokens: Number(llmContextTokens()),
           generalGuidance: generalGuidance(),
           ...(llmApiKey() ? { llmApiKey: llmApiKey() } : {}),
         }),
@@ -1439,7 +1445,19 @@ export default function Home() {
                 />
               </label>
               <label>
-                Responses API base URL
+                Provider
+                <select
+                  value={llmProviderMode()}
+                  onChange={(event) =>
+                    setLlmProviderMode(event.currentTarget.value as "lm-studio" | "openai-compatible")
+                  }
+                >
+                  <option value="lm-studio">LM Studio</option>
+                  <option value="openai-compatible">OpenAI Compatible</option>
+                </select>
+              </label>
+              <label>
+                {llmProviderMode() === "lm-studio" ? "Responses API base URL" : "API base URL"}
                 <input
                   required
                   type="url"
@@ -1469,6 +1487,23 @@ export default function Home() {
                   onInput={(event) => setLlmApiKey(event.currentTarget.value)}
                 />
               </label>
+              <Show when={llmProviderMode() === "openai-compatible"}>
+                <label>
+                  Context window tokens
+                  <input
+                    required
+                    type="number"
+                    min="1024"
+                    step="1"
+                    value={llmContextTokens()}
+                    onInput={(event) => setLlmContextTokens(event.currentTarget.value)}
+                  />
+                  <span>
+                    The maximum context size for your model (e.g. 131072 for
+                    Qwen).
+                  </span>
+                </label>
+              </Show>
               <Button type="submit" variant="accent" class="w-full">
                 <Check size={14} /> Save settings
               </Button>

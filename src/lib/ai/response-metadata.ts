@@ -5,6 +5,32 @@ export type ResponseMetadata = {
   totalTokens?: number;
 };
 
+function usageFromObject(usage: Record<string, unknown>): {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+} {
+  const inputTokens =
+    typeof usage.input_tokens === "number"
+      ? usage.input_tokens
+      : typeof usage.prompt_tokens === "number"
+        ? usage.prompt_tokens
+        : undefined;
+  const outputTokens =
+    typeof usage.output_tokens === "number"
+      ? usage.output_tokens
+      : typeof usage.completion_tokens === "number"
+        ? usage.completion_tokens
+        : undefined;
+  const totalTokens =
+    typeof usage.total_tokens === "number" ? usage.total_tokens : undefined;
+  return {
+    ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+    ...(totalTokens === undefined ? {} : { totalTokens }),
+  };
+}
+
 function metadataFromValue(value: unknown): ResponseMetadata | undefined {
   if (!value || typeof value !== "object") return;
   const response =
@@ -16,25 +42,11 @@ function metadataFromValue(value: unknown): ResponseMetadata | undefined {
   if (!("id" in response) || typeof response.id !== "string") return;
   const usage =
     "usage" in response && response.usage && typeof response.usage === "object"
-      ? response.usage
-      : undefined;
-  const inputTokens =
-    usage && "input_tokens" in usage && typeof usage.input_tokens === "number"
-      ? usage.input_tokens
-      : undefined;
-  const outputTokens =
-    usage && "output_tokens" in usage && typeof usage.output_tokens === "number"
-      ? usage.output_tokens
-      : undefined;
-  const totalTokens =
-    usage && "total_tokens" in usage && typeof usage.total_tokens === "number"
-      ? usage.total_tokens
-      : undefined;
+      ? usageFromObject(response.usage as Record<string, unknown>)
+      : {};
   return {
     responseId: response.id,
-    ...(inputTokens === undefined ? {} : { inputTokens }),
-    ...(outputTokens === undefined ? {} : { outputTokens }),
-    ...(totalTokens === undefined ? {} : { totalTokens }),
+    ...usage,
   };
 }
 

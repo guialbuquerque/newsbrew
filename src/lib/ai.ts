@@ -4,8 +4,9 @@ import {
   filterSystemPrompt,
 } from "./ai/prompts.ts";
 import { createResponsesClient } from "./ai/responses.ts";
-import type { TurnResult } from "./ai/responses.ts";
+import type { ChatMessage, TurnResult } from "./ai/responses.ts";
 import type { ModelContext } from "./ai/model-context.ts";
+import { config } from "./config.ts";
 import type {
   ArticleSkipReason,
   FilterDecision,
@@ -132,7 +133,9 @@ export function createArticleFilter(
 ): ArticleFilter {
   const client = createResponsesClient(abortController);
   const system = filterSystemPrompt(topicPreferences, generalGuidance);
+  const useMessageReplay = config.llmProviderMode === "openai-compatible";
   let previousResponseId: string | undefined;
+  let sessionMessages: ChatMessage[] = [];
   let sessionTokens = 0;
   let largestTurnTokens = 0;
   let sessionTurn = 0;
@@ -145,20 +148,31 @@ export function createArticleFilter(
     },
     async decide(candidate) {
       const modelContext = await client.context;
-      const startedNewSession = previousResponseId === undefined;
+      const startedNewSession = useMessageReplay
+        ? sessionMessages.length === 0
+        : previousResponseId === undefined;
       if (startedNewSession) {
         sessionTokens = 0;
         largestTurnTokens = 0;
         sessionTurn = 0;
+        sessionMessages = [];
       }
-      const turn = await client.text({
-        system,
-        prompt: `Headline: ${candidate.headline}
+      const userPrompt = `Headline: ${candidate.headline}
 Byline: ${candidate.byline}
-Source: ${candidate.sourceName}`,
-        previousResponseId,
-        reasoningEffort: "none",
-      });
+Source: ${candidate.sourceName}`;
+      const turnOptions = useMessageReplay
+        ? {
+            system,
+            prompt: userPrompt,
+            messages: [...sessionMessages, { role: "user" as const, content: userPrompt }],
+          }
+        : {
+            system,
+            prompt: userPrompt,
+            previousResponseId,
+            reasoningEffort: "none" as const,
+          };
+      const turn = await client.text(turnOptions);
       sessionTurn += 1;
       const usage = contextStatus(
         modelContext,
@@ -181,11 +195,23 @@ Source: ${candidate.sourceName}`,
         decision = parseFilterDecision(turn.output);
       } catch (error) {
         previousResponseId = undefined;
+        sessionMessages = [];
         throw error;
       }
-      previousResponseId = nextTurnStartsNewSession
-        ? undefined
-        : turn.responseId;
+      if (useMessageReplay) {
+        if (nextTurnStartsNewSession) {
+          sessionMessages = [];
+        } else {
+          sessionMessages.push(
+            { role: "user", content: userPrompt },
+            { role: "assistant", content: turn.output },
+          );
+        }
+      } else {
+        previousResponseId = nextTurnStartsNewSession
+          ? undefined
+          : turn.responseId;
+      }
       return decision;
     },
   };

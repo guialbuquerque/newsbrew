@@ -124,15 +124,19 @@ export type AppState = {
   lastRunError?: string;
 };
 
+export type ProviderMode = "lm-studio" | "openai-compatible";
+
 export type DashboardState = AppState & {
   feed: Omit<ArticlePage, "articles">;
   filter: {
     generalGuidance: string;
   };
   llm: {
+    providerMode: ProviderMode;
     baseURL: string;
     model: string;
     hasApiKey: boolean;
+    contextTokens: number;
   };
   runtime: {
     pollIntervalMinutes: number;
