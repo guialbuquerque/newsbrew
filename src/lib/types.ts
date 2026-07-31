@@ -133,10 +133,17 @@ export type DashboardState = AppState & {
   };
   llm: {
     providerMode: ProviderMode;
-    baseURL: string;
-    model: string;
-    hasApiKey: boolean;
-    contextTokens: number;
+    lmStudio: {
+      baseURL: string;
+      model: string;
+      hasApiKey: boolean;
+    };
+    openai: {
+      baseURL: string;
+      model: string;
+      hasApiKey: boolean;
+      contextTokens: number;
+    };
   };
   runtime: {
     pollIntervalMinutes: number;

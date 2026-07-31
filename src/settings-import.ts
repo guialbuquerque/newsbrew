@@ -44,11 +44,7 @@ process.stdout.write(
       (topic) => topic.reaction === "dislike",
     ).length,
     runtime: settings.runtime,
-    llm: {
-      baseURL: settings.llm.baseURL,
-      model: settings.llm.model,
-      hasApiKey: settings.llm.hasApiKey,
-    },
+    llm: settings.llm,
     hasGeneralGuidance: settings.filter.generalGuidance.length > 0,
   }, null, 2)}\n`,
 );

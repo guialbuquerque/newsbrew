@@ -151,6 +151,7 @@ function createOpenAICompatibleClient(
   function modelOptions(options: TurnOptions) {
     return {
       temperature: 0.1,
+      enable_thinking: false,
       ...(options.maxOutputTokens
         ? { max_tokens: options.maxOutputTokens }
         : {}),

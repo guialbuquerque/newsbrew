@@ -31,8 +31,12 @@ test("stores ratings, skipped articles, and retained filter decisions", async ()
     store.updateSettings({
       pollIntervalMinutes: initialSettings.runtime.pollIntervalMinutes,
       maxItemsPerSource: initialSettings.runtime.maxItemsPerSource,
-      llmBaseURL: initialSettings.llm.baseURL,
-      llmModel: initialSettings.llm.model,
+      llmProviderMode: initialSettings.llm.providerMode,
+      lmStudioBaseURL: initialSettings.llm.lmStudio.baseURL,
+      lmStudioModel: initialSettings.llm.lmStudio.model,
+      openaiBaseURL: initialSettings.llm.openai.baseURL,
+      openaiModel: initialSettings.llm.openai.model,
+      openaiContextTokens: initialSettings.llm.openai.contextTokens,
       generalGuidance: "Prefer detailed example reporting.",
     });
     assert.equal(

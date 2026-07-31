@@ -7,10 +7,13 @@ const schema = z.object({
   pollIntervalMinutes: z.number().finite().positive(),
   maxItemsPerSource: z.number().int().positive(),
   llmProviderMode: z.enum(["lm-studio", "openai-compatible"]),
-  llmBaseURL: z.string().url(),
-  llmModel: z.string().min(1),
-  llmApiKey: z.string().optional(),
-  llmContextTokens: z.number().int().positive(),
+  lmStudioBaseURL: z.string(),
+  lmStudioModel: z.string(),
+  lmStudioApiKey: z.string().optional(),
+  openaiBaseURL: z.string(),
+  openaiModel: z.string(),
+  openaiApiKey: z.string().optional(),
+  openaiContextTokens: z.number().int().positive(),
   generalGuidance: z.string().max(5_000),
 });
 
